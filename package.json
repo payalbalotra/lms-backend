@@ -15,6 +15,7 @@
     "admin": "tsx src/cli/admin.ts"
   },
   "dependencies": {
+    "@types/bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
     "commander": "^12.1.0",
     "cookie": "^1.0.2",
@@ -29,7 +30,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
     "@types/cookie": "^1.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
