@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Alimentaria Mexicana LMS — backend API",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
