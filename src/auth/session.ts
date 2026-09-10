@@ -53,6 +53,10 @@ export async function createSession(input: CreateSessionInput): Promise<{
     })
     .returning();
 
+  if (!session) {
+    throw new Error('Failed to insert session row');
+  }
+
   return { token, session, maxAgeMs: absoluteMs };
 }
 

@@ -15,7 +15,7 @@ import { sql as drizzleSql } from 'drizzle-orm';
 
 export const locations = pgTable('locations', {
   id: text('id').primaryKey(),
-  name: text('name').notNull(),
+  name: text('name').notNull(), 
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -115,6 +115,35 @@ export const sessions = pgTable(
 );
 
 // ============================================================================
+// Invites (admin issues → employee activates)
+// ============================================================================
+
+export const invites = pgTable(
+  'invites',
+  {
+    id: text('id').primaryKey(),
+    employeeId: text('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    // SHA-256 of the opaque token sent in the activation URL.
+    tokenHash: text('token_hash').notNull(),
+    // bcrypt hash of the 5-digit activation code.
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    tokenHashUnique: uniqueIndex('invites_token_hash_uniq').on(t.tokenHash),
+    byEmployee: index('invites_employee_idx').on(t.employeeId),
+  }),
+);
+
+// ============================================================================
 // Inferred types
 // ============================================================================
 
@@ -125,3 +154,5 @@ export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+export type Invite = typeof invites.$inferSelect;
+export type NewInvite = typeof invites.$inferInsert;

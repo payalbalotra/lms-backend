@@ -8,6 +8,13 @@
       "when": 1788950858943,
       "tag": "0000_ordinary_peter_quill",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789022054346,
+      "tag": "0001_faithful_jackpot",
+      "breakpoints": true
     }
   ]
 }
