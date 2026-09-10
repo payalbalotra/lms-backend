@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import { Command } from 'commander';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client';
-import { employees, type ClearanceLevel } from '../db/schema';
+import { employees, stations, type ClearanceLevel } from '../db/schema';
 import { hashPassword } from '../auth/password';
 import { uniqueEmployeeName } from '../services/employee-name';
 
@@ -127,6 +127,59 @@ program
     });
 
     console.log(`Created employee: ${name} (id=${id}, clearance=${clearance})`);
+  });
+
+
+
+const SEED_STATIONS: Array<{ id: string; name: string; sortOrder: number }> = [
+  { id: 'stn-hot-line', name: 'Hot line', sortOrder: 10 },
+  { id: 'stn-cold-prep', name: 'Cold prep', sortOrder: 20 },
+  { id: 'stn-tortillas', name: 'Tortilla station', sortOrder: 30 },
+  { id: 'stn-sauces', name: 'Sauces & salsas', sortOrder: 40 },
+  { id: 'stn-beverages', name: 'Beverage bar', sortOrder: 50 },
+  { id: 'stn-dish', name: 'Dish pit', sortOrder: 60 },
+];
+
+program
+  .command('seed-stations')
+  .description(
+    'Insert the default Mexican-restaurant station fixtures for the given location. Idempotent (ON CONFLICT DO NOTHING).',
+  )
+  .requiredOption('--token <token>', 'Must match ADMIN_BOOTSTRAP_TOKEN env var')
+  .requiredOption('--location <id>', 'Location ID to attach stations to')
+  .action(async (opts) => {
+    requireBootstrapToken(opts.token);
+
+    const seedIds = SEED_STATIONS.map((s) => s.id);
+    const before = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(inArray(stations.id, seedIds));
+
+    await db
+      .insert(stations)
+      .values(
+        SEED_STATIONS.map((s) => ({
+          id: s.id,
+          name: s.name,
+          locationId: opts.location,
+          sortOrder: s.sortOrder,
+          isArchived: false,
+        })),
+      )
+      .onConflictDoNothing();
+
+    const after = await db
+      .select({ id: stations.id, name: stations.name, sortOrder: stations.sortOrder })
+      .from(stations)
+      .where(inArray(stations.id, seedIds))
+      .orderBy(stations.sortOrder);
+
+    const inserted = after.length - before.length;
+    console.log(`location=${opts.location} requested=${SEED_STATIONS.length} already_present=${before.length} inserted=${inserted}`);
+    for (const row of after) {
+      console.log(`  ${row.id} | ${row.name} (sort=${row.sortOrder})`);
+    }
   });
 
 

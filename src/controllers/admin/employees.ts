@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import { and, eq, sql, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   employees,
@@ -12,6 +12,10 @@ import {
 } from '../../db/schema';
 import { createInvite } from '../../auth/invites';
 import { uniqueEmployeeName } from '../../services/employee-name';
+import { ServiceError } from '../../services/errors';
+import * as stationsService from '../../services/stations';
+import * as rolesService from '../../services/roles';
+import * as locationsService from '../../services/locations';
 
 const PUBLIC_WEB_BASE_URL =
   process.env.PUBLIC_WEB_BASE_URL ?? 'http://localhost:3000';
@@ -31,9 +35,80 @@ const createSchema = z.object({
 
 const idParam = z.object({ id: z.string().uuid() });
 
+// Slug ids for stations / roles / locations — lowercase, digits, dashes, 1-64 chars.
+// Matches the seeded values (e.g. `loc-main`, `role-general`, `stn-hot-line`).
+const slugIdParam = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+});
+
+const stationCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  locationId: z.string().min(1).max(64),
+  sortOrder: z.number().int().min(0).max(1000).optional(),
+});
+const stationPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  sortOrder: z.number().int().min(0).max(1000).optional(),
+  isArchived: z.boolean().optional(),
+});
+
+const roleCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  clearanceLevel: clearanceEnum,
+});
+const rolePatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  clearanceLevel: clearanceEnum.optional(),
+});
+
+const locationCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+const locationPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+
 function buildInviteUrl(languagePref: LanguagePref, token: string): string {
   return `${PUBLIC_WEB_BASE_URL}/${languagePref}/activate/${token}`;
 }
+
+function invalidInput(
+  res: Response,
+  issues: z.ZodError['issues'],
+): void {
+  res.status(400).json({
+    error: {
+      code: 'INVALID_INPUT',
+      message: 'Invalid input',
+      details: issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    },
+  });
+}
+
+function unauthenticated(res: Response): void {
+  res.status(401).json({
+    error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
+  });
+}
+
+// Catch ServiceError throws from the service layer and translate to HTTP JSON.
+// Returns true if handled, false if the caller should re-throw.
+function handleServiceError(err: unknown, res: Response): boolean {
+  if (err instanceof ServiceError) {
+    res.status(err.status).json({
+      error: { code: err.code, message: err.message },
+    });
+    return true;
+  }
+  return false;
+}
+
+// ============================================================================
+// Employees CRUD (existing)
+// ============================================================================
 
 // ---------- POST /api/admin/employees --------------------------------------
 export async function createEmployee(
@@ -42,24 +117,13 @@ export async function createEmployee(
 ): Promise<void> {
   const admin = req.employee;
   if (!admin) {
-    res.status(401).json({
-      error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
-    });
+    unauthenticated(res);
     return;
   }
 
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: {
-        code: 'INVALID_INPUT',
-        message: 'Invalid input',
-        details: parsed.error.issues.map((i) => ({
-          path: i.path.join('.'),
-          message: i.message,
-        })),
-      },
-    });
+    invalidInput(res, parsed.error.issues);
     return;
   }
   const input = parsed.data;
@@ -169,9 +233,7 @@ export async function resendInvite(
 ): Promise<void> {
   const admin = req.employee;
   if (!admin) {
-    res.status(401).json({
-      error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
-    });
+    unauthenticated(res);
     return;
   }
 
@@ -354,50 +416,294 @@ export async function listEmployees(
   });
 }
 
-// ---------- GET /api/admin/roles -------------------------------------------
-export async function listRoles(_req: Request, res: Response): Promise<void> {
-  const rows = await db.select().from(roles);
-  res.json({
-    roles: rows.map((r) => ({
-      id: r.id,
-      clearanceLevel: r.clearanceLevel,
-      createdAt: r.createdAt.toISOString(),
-    })),
-  });
-}
+// ============================================================================
+// Stations — thin handlers delegate to stationsService
+// ============================================================================
 
 // ---------- GET /api/admin/stations?locationId=... -------------------------
 export async function listStations(req: Request, res: Response): Promise<void> {
   const locationId = String(req.query.locationId ?? '');
   if (!locationId) {
     res.status(400).json({
-      error: { code: 'LOCATION_ID_REQUIRED', message: 'locationId is required' },
+      error: {
+        code: 'LOCATION_ID_REQUIRED',
+        message: 'locationId is required',
+      },
     });
     return;
   }
-  const rows = await db
-    .select()
-    .from(stations)
-    .where(eq(stations.locationId, locationId));
-  res.json({
-    stations: rows.map((s) => ({
-      id: s.id,
-      locationId: s.locationId,
-      sortOrder: s.sortOrder,
-      isArchived: s.isArchived,
-    })),
-  });
+  const includeArchived = req.query.includeArchived === 'true';
+  try {
+    const result = await stationsService.listStations({
+      locationId,
+      includeArchived,
+    });
+    res.json({ stations: result });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
 }
 
-// ---------- GET /api/admin/locations --------------------------------------
-export async function listLocations(_req: Request, res: Response): Promise<void> {
-  const rows = await db.select().from(locations);
-  res.json({
-    locations: rows.map((l) => ({ id: l.id, name: l.name })),
-  });
+// ---------- POST /api/admin/stations ---------------------------------------
+export async function createStation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const parsed = stationCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const station = await stationsService.createStation({
+      ...parsed.data,
+      sortOrder: parsed.data.sortOrder ?? 0,
+    });
+    res.status(201).json({ station });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
 }
 
-// ---------- helpers --------------------------------------------------------
+// ---------- PATCH /api/admin/stations/:id ----------------------------------
+export async function updateStation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid station id' },
+    });
+    return;
+  }
+  const patch = stationPatchSchema.safeParse(req.body);
+  if (!patch.success) {
+    invalidInput(res, patch.error.issues);
+    return;
+  }
+  try {
+    const station = await stationsService.updateStation(
+      param.data.id,
+      patch.data,
+    );
+    res.json({ station });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/stations/:id/archive ---------------------------
+export async function archiveStation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid station id' },
+    });
+    return;
+  }
+  try {
+    const station = await stationsService.archiveStation(param.data.id);
+    res.json({ station });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ============================================================================
+// Roles — thin handlers delegate to rolesService
+// ============================================================================
+
+// ---------- GET /api/admin/roles -------------------------------------------
+export async function listRoles(_req: Request, res: Response): Promise<void> {
+  try {
+    const result = await rolesService.listRoles();
+    res.json({ roles: result });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/roles ------------------------------------------
+export async function createRole(req: Request, res: Response): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const parsed = roleCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const role = await rolesService.createRole(parsed.data);
+    res.status(201).json({ role });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- PATCH /api/admin/roles/:id -------------------------------------
+export async function updateRole(req: Request, res: Response): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid role id' },
+    });
+    return;
+  }
+  const patch = rolePatchSchema.safeParse(req.body);
+  if (!patch.success) {
+    invalidInput(res, patch.error.issues);
+    return;
+  }
+  try {
+    const role = await rolesService.updateRole(param.data.id, patch.data);
+    res.json({ role });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- DELETE /api/admin/roles/:id ------------------------------------
+export async function deleteRole(req: Request, res: Response): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid role id' },
+    });
+    return;
+  }
+  try {
+    await rolesService.deleteRole(param.data.id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ============================================================================
+// Locations — thin handlers delegate to locationsService
+// ============================================================================
+
+// ---------- GET /api/admin/locations ---------------------------------------
+export async function listLocations(
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const result = await locationsService.listLocations();
+    res.json({ locations: result });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/locations --------------------------------------
+export async function createLocation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const parsed = locationCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const location = await locationsService.createLocation(parsed.data);
+    res.status(201).json({ location });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- PATCH /api/admin/locations/:id ---------------------------------
+export async function updateLocation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid location id' },
+    });
+    return;
+  }
+  const patch = locationPatchSchema.safeParse(req.body);
+  if (!patch.success) {
+    invalidInput(res, patch.error.issues);
+    return;
+  }
+  try {
+    const location = await locationsService.updateLocation(
+      param.data.id,
+      patch.data,
+    );
+    res.json({ location });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- DELETE /api/admin/locations/:id --------------------------------
+export async function deleteLocation(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const param = slugIdParam.safeParse(req.params);
+  if (!param.success) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Invalid location id' },
+    });
+    return;
+  }
+  try {
+    await locationsService.deleteLocation(param.data.id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ============================================================================
+// Shared helpers
+// ============================================================================
+
 function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
   return {
     id: e.id,

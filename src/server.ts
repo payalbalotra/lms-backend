@@ -33,25 +33,27 @@ app.use(express.json({ limit: '256kb' }));
 
 app.use(requestId);
 
+app.use(requestId);
+
 app.use(
   pinoHttp({
     logger,
-    customProps: (req) => ({ reqId: (req as { id?: string }).id }),
-    customLogLevel: (_req, res, err) => {
-      if (err || res.statusCode >= 500) return 'error';
-      if (res.statusCode >= 400) return 'warn';
-      return 'info';
-    },
-    serializers: {
-      req: (req) => ({
-        method: req.method,
-        url: req.url,
-        remoteAddress: req.remoteAddress,
-      }),
-      res: (res) => ({ statusCode: res.statusCode }),
-    },
+    autoLogging: false,
   }),
 );
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const url = req.originalUrl ?? req.url;
+    const line = `${req.method} ${url} -> ${res.statusCode} (${ms}ms)`;
+    if (res.statusCode >= 500) logger.error(line);
+    else if (res.statusCode >= 400) logger.warn(line);
+    else logger.info(line);
+  });
+  next();
+});
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });

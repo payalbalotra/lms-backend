@@ -21,6 +21,7 @@ export const locations = pgTable('locations', {
 
 export const roles = pgTable('roles', {
   id: text('id').primaryKey(),
+  name: text('name').notNull(),
   // general | station | confidential | master — enforced at the route layer.
   clearanceLevel: text('clearance_level').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -30,6 +31,7 @@ export const stations = pgTable(
   'stations',
   {
     id: text('id').primaryKey(),
+    name: text('name').notNull().default(''),
     locationId: text('location_id')
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
