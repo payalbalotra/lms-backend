@@ -3,6 +3,10 @@ import { and, eq, gt, isNull } from 'drizzle-orm';
 import { db } from '../db/client';
 import { sessions, type Session } from '../db/schema';
 
+// Re-export so callers can `import type { Session } from '../auth/session'`
+// without reaching into db/schema directly.
+export type { Session };
+
 
 
 const PERSONAL_IDLE_MS = 30 * 60 * 1000;          // 30 min
@@ -18,9 +22,6 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// ============================================================================
-// Session lifecycle
-// ============================================================================
 
 export interface CreateSessionInput {
   employeeId: string;
