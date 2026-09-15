@@ -1,9 +1,23 @@
 import crypto from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import { employees, invites, type Invite, type Employee } from '../db/schema';
-import { hashPassword, verifyPassword } from './password';
 import { generateActivationCode } from './code';
+
+// The 5-digit activation code is a low-entropy secret (10^5 ≈ 17 bits).
+// Rate-limiting at the route layer is the primary defense — bcrypt just
+// keeps the stored value safe at rest. bcrypt is also what was used before
+// the Better Auth migration, so existing code hashes stay compatible.
+const SALT_ROUNDS = 10;
+
+function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, SALT_ROUNDS);
+}
+
+function verifyPassword(plain: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(plain, hash);
+}
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 

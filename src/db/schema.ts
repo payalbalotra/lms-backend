@@ -9,6 +9,15 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql as drizzleSql } from 'drizzle-orm';
 
+// Re-export Better Auth tables (user/session/account/verification) so the
+// rest of the codebase can keep importing everything from `@/db/schema`.
+// The auth-schema file is CLI-generated and may be regenerated on upgrade
+// — do not hand-edit it.
+export * from './auth-schema';
+// Named import for the `employees.userId` FK reference — `export *` does not
+// create a local binding, so we need this in addition.
+import { user } from './auth-schema';
+
 // ============================================================================
 // Locations, roles, stations
 // ============================================================================
@@ -57,10 +66,21 @@ export type ClearanceLevel = (typeof clearanceLevels)[number];
 export const languagePrefs = ['en', 'es'] as const;
 export type LanguagePref = (typeof languagePrefs)[number];
 
+// 'access' = short-lived bearer sent on every API call.
+// 'refresh' = long-lived token used only at /api/auth/refresh to mint a new pair.
+export const sessionKinds = ['access', 'refresh'] as const;
+export type SessionKind = (typeof sessionKinds)[number];
+
 export const employees = pgTable(
   'employees',
   {
     id: text('id').primaryKey(),
+    // FK to Better Auth's user table. Nullable because the employee row is
+    // created first (admin form), and the Better Auth user is provisioned
+    // later when the employee activates via the 5-digit code.
+    // requireAuth treats a NULL userId as "no active employee" → SESSION_INVALID.
+    // onDelete:cascade remains so deleting a Better Auth user removes the LMS row.
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     // LOGIN identifier. Compared case-insensitively at the route layer.
     name: text('name').notNull(),
     employeeCode: text('employee_code'),
@@ -91,30 +111,11 @@ export const employees = pgTable(
     codeUnique: uniqueIndex('employees_code_uniq')
       .on(t.employeeCode)
       .where(drizzleSql`${t.employeeCode} IS NOT NULL`),
+    // 1:1 with Better Auth's user table.
+    userIdUnique: uniqueIndex('employees_user_id_uniq').on(t.userId),
   }),
 );
 
-export const sessions = pgTable(
-  'sessions',
-  {
-    id: text('id').primaryKey(),
-    employeeId: text('employee_id')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'cascade' }),
-    // Argon2id hash of the opaque session token sent in the cookie.
-    sessionTokenHash: text('session_token_hash').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    ip: text('ip'),
-    userAgent: text('user_agent'),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => ({
-    tokenHashUnique: uniqueIndex('sessions_token_hash_uniq').on(t.sessionTokenHash),
-    byEmployee: index('sessions_employee_idx').on(t.employeeId),
-  }),
-);
 
 // ============================================================================
 // Invites (admin issues → employee activates)
@@ -154,7 +155,5 @@ export type Role = typeof roles.$inferSelect;
 export type Station = typeof stations.$inferSelect;
 export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;
-export type Session = typeof sessions.$inferSelect;
-export type NewSession = typeof sessions.$inferInsert;
 export type Invite = typeof invites.$inferSelect;
 export type NewInvite = typeof invites.$inferInsert;

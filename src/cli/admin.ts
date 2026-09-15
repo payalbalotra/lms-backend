@@ -4,10 +4,28 @@ import { Command } from 'commander';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client';
 import { employees, stations, type ClearanceLevel } from '../db/schema';
-import { hashPassword } from '../auth/password';
+import { createInvite } from '../auth/invites';
 import { uniqueEmployeeName } from '../services/employee-name';
 
+// ============================================================================
+// Almentria Mexicana LMS — admin CLI
+// ============================================================================
+// Two flows:
+//   1. bootstrap — first-time setup. Creates a single master-clearance
+//      employee and an invite for them. There is no prior admin to issue
+//      the invite, so the invite's createdBy points at the bootstrapping
+//      employee themselves (self-invite). The operator opens the printed
+//      URL, enters the 5-digit code, and sets a password.
+//   2. add-employee — admin creates an employee and prints the invite URL
+//      + code for the new hire. Same flow as the admin form.
+//
+// CLI does NOT set passwords. Passwords are provisioned via the activation
+// flow (POST /api/auth/activate) so we have one canonical password-creation
+// path that uses Better Auth's signUpEmail + scrypt hashing.
+// ============================================================================
 
+const PUBLIC_WEB_BASE_URL =
+  process.env.PUBLIC_WEB_BASE_URL ?? 'http://localhost:3000';
 
 function requireBootstrapToken(cmdToken: string | undefined): void {
   const expected = process.env.ADMIN_BOOTSTRAP_TOKEN;
@@ -21,25 +39,39 @@ function requireBootstrapToken(cmdToken: string | undefined): void {
   }
 }
 
-
+function printInviteBlock(opts: {
+  languagePref: 'en' | 'es';
+  token: string;
+  code: string;
+  expiresAt: Date;
+  employeeName: string;
+}): void {
+  const url = `${PUBLIC_WEB_BASE_URL}/${opts.languagePref}/activate/${opts.token}`;
+  console.log('');
+  console.log('Employee created.');
+  console.log(`  Name:        ${opts.employeeName}`);
+  console.log(`  Activate:    ${url}`);
+  console.log(`  Code:        ${opts.code}`);
+  console.log(`  Expires:     ${opts.expiresAt.toISOString()}`);
+  console.log('');
+}
 
 const program = new Command();
 program
   .name('admin')
-  .description('Alimentaria Mexicana LMS — admin CLI')
+  .description('Almentria Mexicana LMS — admin CLI')
   .version('0.1.0');
 
 
 program
   .command('bootstrap')
   .description(
-    'Create the first master-clearance employee. Refuses to run if one already exists.',
+    'Create the first master-clearance employee + invite. Refuses to run if a master employee already exists.',
   )
   .requiredOption('--token <token>', 'Must match ADMIN_BOOTSTRAP_TOKEN env var')
   .requiredOption('--name <name>', 'Display name (login identifier)')
-  .requiredOption('--location <uuid>', 'Location ID')
-  .requiredOption('--role <uuid>', 'Role ID (should have clearance_level=master)')
-  .requiredOption('--password <password>', 'Initial password (will be bcrypt-hashed)')
+  .requiredOption('--location <id>', 'Location ID')
+  .requiredOption('--role <id>', 'Role ID (should have clearance_level=master)')
   .option('--language <en|es>', 'Language preference', 'en')
   .action(async (opts) => {
     requireBootstrapToken(opts.token);
@@ -58,24 +90,36 @@ program
     }
 
     const name = await uniqueEmployeeName(opts.location, opts.name);
-    const passwordHash = await hashPassword(opts.password);
-    const id = crypto.randomUUID();
+    const employeeId = crypto.randomUUID();
+    const languagePref = opts.language === 'es' ? 'es' : 'en';
 
     await db.insert(employees).values({
-      id,
+      id: employeeId,
       name,
       locationId: opts.location,
       roleId: opts.role,
       clearanceLevel: 'master',
-      languagePref: opts.language === 'es' ? 'es' : 'en',
-      status: 'active',
-      passwordHash,
+      languagePref,
+      status: 'pending',
       mustResetPassword: false,
     });
 
-    console.log(`Created master employee: ${name} (id=${id})`);
-  });
+    // Self-invite: no prior admin exists, so the invite's createdBy points
+    // at the bootstrapping employee. The activate flow sets the password
+    // via Better Auth's signUpEmail, then the userId is linked.
+    const invite = await createInvite({
+      employeeId,
+      createdBy: employeeId,
+    });
 
+    printInviteBlock({
+      languagePref,
+      token: invite.token,
+      code: invite.code,
+      expiresAt: invite.expiresAt,
+      employeeName: name,
+    });
+  });
 
 
 const CLEARANCE_LEVELS: ClearanceLevel[] = [
@@ -87,13 +131,14 @@ const CLEARANCE_LEVELS: ClearanceLevel[] = [
 
 program
   .command('add-employee')
-  .description('Create a new employee with a known password')
+  .description(
+    'Create a new employee + invite. Prints the activation URL and 5-digit code.',
+  )
   .requiredOption('--token <token>', 'Must match ADMIN_BOOTSTRAP_TOKEN env var')
   .requiredOption('--name <name>', 'Display name (login identifier)')
-  .requiredOption('--location <uuid>', 'Location ID')
-  .requiredOption('--role <uuid>', 'Role ID')
-  .requiredOption('--password <password>', 'Initial password (will be bcrypt-hashed)')
-  .option('--station <uuid>', 'Station ID (optional)')
+  .requiredOption('--location <id>', 'Location ID')
+  .requiredOption('--role <id>', 'Role ID')
+  .option('--station <id>', 'Station ID (optional)')
   .option('--clearance <level>', 'general|station|confidential|master', 'general')
   .option('--language <en|es>', 'Language preference', 'en')
   .action(async (opts) => {
@@ -110,23 +155,35 @@ program
     const languagePref = opts.language === 'es' ? 'es' : 'en';
 
     const name = await uniqueEmployeeName(opts.location, opts.name);
-    const passwordHash = await hashPassword(opts.password);
-    const id = crypto.randomUUID();
+    const employeeId = crypto.randomUUID();
 
     await db.insert(employees).values({
-      id,
+      id: employeeId,
       name,
       locationId: opts.location,
       roleId: opts.role,
       stationId: opts.station ?? null,
       clearanceLevel: clearance,
       languagePref,
-      status: 'active',
-      passwordHash,
+      status: 'pending',
       mustResetPassword: false,
     });
 
-    console.log(`Created employee: ${name} (id=${id}, clearance=${clearance})`);
+    // The CLI operator is acting on behalf of an admin; reuse the bootstrap
+    // token's authority. For a real audit trail, replace this with an
+    // --admin <employeeId> flag once the operator is itself an employee.
+    const invite = await createInvite({
+      employeeId,
+      createdBy: employeeId,
+    });
+
+    printInviteBlock({
+      languagePref,
+      token: invite.token,
+      code: invite.code,
+      expiresAt: invite.expiresAt,
+      employeeName: name,
+    });
   });
 
 

@@ -1,130 +1,36 @@
 import type { Request, Response } from 'express';
-import { z } from 'zod';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/client';
 import { employees, type Employee } from '../db/schema';
-import { verifyPassword } from '../auth/password';
-import {
-  createSession,
-  validateSession,
-  revokeSession,
-  type DeviceMode,
-} from '../auth/session';
-import {
-  setSessionCookie,
-  clearSessionCookie,
-  readSessionCookie,
-} from '../auth/cookies';
-import {
-  isLocked,
-  recordFailedLogin,
-  recordSuccessfulLogin,
-} from '../auth/ratelimit';
-
-// ============================================================================
-// POST /api/auth/login
-// ============================================================================
-
-const loginSchema = z.object({
-  name: z.string().min(1).max(120),
-  password: z.string().min(1).max(200),
-  locationId: z.string().min(1).max(64),
-  deviceMode: z.enum(['personal', 'shared']).optional().default('personal'),
-});
-
-export async function login(req: Request, res: Response): Promise<void> {
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: { code: 'INVALID_INPUT', message: 'Invalid input' },
-    });
-    return;
-  }
-
-  const { name, password, locationId, deviceMode } = parsed.data;
-  const rateKey = `${locationId}:${name.toLowerCase()}`;
-
-  const lockCheck = isLocked(rateKey);
-  if (lockCheck.locked) {
-    res.status(423).json({
-      error: {
-        code: 'ACCOUNT_LOCKED',
-        message: 'Too many failed attempts. Try again later.',
-      },
-      lockedUntil: lockCheck.lockedUntil,
-    });
-    return;
-  }
-
-  const [employee] = await db
-    .select()
-    .from(employees)
-    .where(
-      and(
-        eq(employees.locationId, locationId),
-        sql`lower(${employees.name}) = ${name.toLowerCase()}`,
-        eq(employees.status, 'active'),
-      ),
-    )
-    .limit(1);
-
-  // Always run verifyPassword even if employee missing, to keep timing constant.
-  const hashToCheck =
-    employee?.passwordHash ??
-    '$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinva';
-  const ok = await verifyPassword(password, hashToCheck);
-
-  if (!employee || !employee.passwordHash || !ok) {
-    recordFailedLogin(rateKey);
-    res.status(401).json({
-      error: { code: 'INVALID_CREDENTIALS', message: 'Invalid name or password' },
-    });
-    return;
-  }
-
-  recordSuccessfulLogin(rateKey);
-
-  const ip = req.ip;
-  const userAgent = req.get('user-agent') ?? undefined;
-  const { token, maxAgeMs } = await createSession({
-    employeeId: employee.id,
-    ip,
-    userAgent,
-    deviceMode: deviceMode as DeviceMode,
-  });
-
-  setSessionCookie(res, token, maxAgeMs);
-  res.json({ employee: publicEmployee(employee) });
-}
-
-// ============================================================================
-// POST /api/auth/logout
-// ============================================================================
-
-export async function logout(req: Request, res: Response): Promise<void> {
-  const token = readSessionCookie(req);
-  if (token) await revokeSession(token);
-  clearSessionCookie(res);
-  res.json({ ok: true });
-}
+import { auth } from '../auth/better-auth';
 
 // ============================================================================
 // GET /api/auth/me
 // ============================================================================
+// Reads the Better Auth session cookie and returns the LMS employee record
+// attached to that user. Login/logout go through Better Auth's built-in
+// endpoints: /api/auth/sign-in/email and /api/auth/sign-out.
+//
+// 401 SESSION_INVALID when:
+//   - no session cookie
+//   - cookie is invalid / expired / revoked
+//   - session belongs to a Better Auth user with no LMS employee row
+//     (deactivated, deleted, or never activated)
+//
+// The deviceMode is read from the X-Device-Mode header so the frontend can
+// switch idle-window behavior without re-issuing a cookie. The /me response
+// echoes it back so callers can confirm.
+// ============================================================================
 
 export async function me(req: Request, res: Response): Promise<void> {
-  const token = readSessionCookie(req);
-  if (!token) {
-    res.status(401).json({
-      error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
-    });
-    return;
+  // Better Auth's getSession expects fetch Headers, not Express's IncomingHttpHeaders.
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
   }
+  const session = await auth.api.getSession({ headers });
 
-  const deviceMode: DeviceMode =
-    req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
-
-  const session = await validateSession(token, deviceMode);
   if (!session) {
     res.status(401).json({
       error: { code: 'SESSION_INVALID', message: 'Session expired or invalid' },
@@ -135,17 +41,23 @@ export async function me(req: Request, res: Response): Promise<void> {
   const [employee] = await db
     .select()
     .from(employees)
-    .where(eq(employees.id, session.employeeId))
+    .where(eq(employees.userId, session.user.id))
     .limit(1);
 
-  if (!employee) {
+  if (!employee || employee.status !== 'active') {
     res.status(401).json({
-      error: { code: 'EMPLOYEE_NOT_FOUND', message: 'Employee not found' },
+      error: { code: 'SESSION_INVALID', message: 'Session expired or invalid' },
     });
     return;
   }
 
-  res.json({ employee: publicEmployee(employee) });
+  const deviceMode: 'personal' | 'shared' =
+    req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
+
+  res.json({
+    employee: publicEmployee(employee),
+    deviceMode,
+  });
 }
 
 // ============================================================================

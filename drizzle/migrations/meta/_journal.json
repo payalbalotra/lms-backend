@@ -29,6 +29,34 @@
       "when": 1789035476520,
       "tag": "0004_bitter_dormammu",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789382329182,
+      "tag": "0005_gigantic_venus",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789382430360,
+      "tag": "0006_kind_romulus",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789386455781,
+      "tag": "0007_add_employees_user_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789386919410,
+      "tag": "0008_employees_user_id_nullable",
+      "breakpoints": true
     }
   ]
 }

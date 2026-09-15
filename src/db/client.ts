@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import * as schema from './schema';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -26,7 +27,7 @@ export const sql = postgres(url, {
   prepare: false, // disable server-side prepared statements (PgBouncer compat)
 });
 
-export const db = drizzle(sql);
+export const db = drizzle(sql, { schema });
 export type Db = typeof db;
 
 /**

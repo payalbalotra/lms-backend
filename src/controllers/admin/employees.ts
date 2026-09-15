@@ -1,12 +1,13 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   employees,
   locations,
   roles,
+  session,
   stations,
   type LanguagePref,
 } from '../../db/schema';
@@ -319,9 +320,11 @@ export async function deactivate(
       .update(employees)
       .set({ status: 'deactivated', deactivatedAt: new Date() })
       .where(eq(employees.id, employee.id));
-    await tx.execute(
-      sql`update sessions set revoked_at = now() where employee_id = ${employee.id} and revoked_at is null`,
-    );
+    // Kill every active Better Auth session for this employee. If the
+    // employee never activated, employees.userId is null and this is a no-op.
+    if (employee.userId) {
+      await tx.delete(session).where(eq(session.userId, employee.userId));
+    }
   });
 
   const [updated] = await db
