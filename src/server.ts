@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import { appendFileSync } from 'node:fs';
 import { toNodeHandler } from 'better-auth/node';
 import { sql, closeDb } from './db/client.js';
 import { logger } from './lib/logger.js';
@@ -39,6 +40,16 @@ app.use(requestId);
 // One log line per request, written when the response finishes.
 // This is the ONLY place request logging happens — pino-http is gone
 // so there is no req.log to accidentally dump headers/cookies.
+//
+// Output is sent BOTH to pino (best-effort stdout) AND appended to
+// backend.log via fs.appendFileSync. On Windows + tsx-watch, fd 1 writes
+// from inside request callbacks get swallowed by the child-process pipe
+// even with pino.destination({ sync: true }), so the file is the source
+// of truth. Tail it from another terminal:
+//
+//   Get-Content backend.log -Tail 50 -Wait
+const REQUEST_LOG_FILE = 'backend.log';
+
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -48,6 +59,11 @@ app.use((req, res, next) => {
     if (res.statusCode >= 500) logger.error(line);
     else if (res.statusCode >= 400) logger.warn(line);
     else logger.info(line);
+    try {
+      appendFileSync(REQUEST_LOG_FILE, `${line}\n`);
+    } catch {
+      // never throw from logging
+    }
   });
   next();
 });

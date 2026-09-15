@@ -34,15 +34,15 @@ export const auth = betterAuth({
     autoSignIn: false,           // we sign in explicitly from the activate controller
   },
 
-  // 3. Session shape — kept conservative. Sliding refresh + in-memory
-  //    cookieCache so /me and requireAuth don't hit the DB on every request.
+  // 3. Session shape — kept conservative. Sliding refresh, no cookie cache:
+  //    the in-memory cache previously caused two near-simultaneous reads on
+  //    the same cookie to return different verdicts (one from cache, one
+  //    fresh from the DB), which made /api/auth/me succeed and requireAuth
+  //    reject the same cookie inside one SSR render. With one tenant and a
+  //    handful of seats the per-request DB hit is negligible.
   session: {
     expiresIn: 60 * 60 * 8,      // 8 hours absolute
     updateAge: 60 * 15,          // sliding: extend expiry every 15 min of activity
-    cookieCache: {
-      enabled: true,
-      maxAge: 60 * 5,            // 5-min in-memory cache of valid sessions
-    },
   },
 
   // 4. Cookie hardening — match the existing __Host- convention in production.
