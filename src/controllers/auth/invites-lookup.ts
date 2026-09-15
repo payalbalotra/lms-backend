@@ -27,5 +27,6 @@ export async function lookupInviteController(
   res.json({
     employeeName: result.lookup.employeeName,
     expiresAt: result.lookup.expiresAt.toISOString(),
+    employeeStatus: result.lookup.employeeStatus,
   });
 }

@@ -109,13 +109,41 @@ export async function activate(req: Request, res: Response): Promise<void> {
   // already exists (it does NOT throw and does NOT update the password).
   // That used to leave activation in a half-state where the transaction
   // linked the employee but signInEmail later failed with "Invalid password".
-  // Detect the duplicate up front and refuse cleanly with 410.
+  //
+  // Two distinct situations land here:
+  //   1. The employee was previously activated — they have a Better Auth
+  //      user with the synthetic email. The invite itself may be brand new
+  //      (admin clicked "Resend invite"). Returning INVITE_ALREADY_USED
+  //      here would be wrong: the invite wasn't used; the employee is just
+  //      already active. Tell them to sign in instead.
+  //   2. A race created a BA user between our pre-check and signUpEmail —
+  //      we surface that as INVITE_ALREADY_USED so the caller can retry
+  //      without seeing "your account is already active" misleadingly.
+  //
+  // We tell them apart by looking at employees.userId: when an activation
+  // completed, it sets employees.userId AND creates the BA user. So a BA
+  // user without a linked employee = race / orphan = INVITE_ALREADY_USED.
+  // A BA user with a linked, active employee = EMPLOYEE_ALREADY_ACTIVE.
   const [existingUser] = await db
     .select({ id: user.id })
     .from(user)
     .where(eq(user.email, syntheticEmail))
     .limit(1);
   if (existingUser) {
+    const [linkedEmployee] = await db
+      .select({ status: employees.status })
+      .from(employees)
+      .where(eq(employees.userId, existingUser.id))
+      .limit(1);
+    if (linkedEmployee && linkedEmployee.status === 'active') {
+      res.status(409).json({
+        error: {
+          code: 'EMPLOYEE_ALREADY_ACTIVE',
+          message: 'This account is already set up. Please sign in instead.',
+        },
+      });
+      return;
+    }
     res.status(410).json({
       error: { code: 'INVITE_ALREADY_USED', message: 'Invite already used.' },
     });

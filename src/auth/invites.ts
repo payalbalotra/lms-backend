@@ -108,10 +108,17 @@ export async function validateInviteCode(
 }
 
 // Public-only lookup. Returns nothing secret.
+//
+// We surface the employee's status alongside the invite so the activation
+// page can render the right state. An employee can have a perfectly valid
+// invite (fresh, not cancelled, not expired, not consumed) and STILL be
+// already activated — e.g. admin clicked "Resend invite" after a previous
+// activation succeeded. The page needs to know that to skip the form.
 export interface InviteLookup {
   inviteId: string;
   employeeName: string;
   expiresAt: Date;
+  employeeStatus: 'pending' | 'active' | 'deactivated';
 }
 
 export async function lookupInvite(token: string): Promise<
@@ -120,7 +127,11 @@ export async function lookupInvite(token: string): Promise<
 > {
   const tokenHash = hashToken(token);
   const [row] = await db
-    .select({ invite: invites, employeeName: employees.name })
+    .select({
+      invite: invites,
+      employeeName: employees.name,
+      employeeStatus: employees.status,
+    })
     .from(invites)
     .innerJoin(employees, eq(employees.id, invites.employeeId))
     .where(eq(invites.tokenHash, tokenHash))
@@ -137,6 +148,7 @@ export async function lookupInvite(token: string): Promise<
       inviteId: row.invite.id,
       employeeName: row.employeeName,
       expiresAt: row.invite.expiresAt,
+      employeeStatus: row.employeeStatus,
     },
   };
 }
