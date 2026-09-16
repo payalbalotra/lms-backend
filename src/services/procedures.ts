@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db/client';
-import { procedures, type Procedure, type ProcedureStatus } from '../db/schema';
+import { categories, procedures, type Procedure, type ProcedureStatus } from '../db/schema';
 import { ServiceError } from './errors';
 import { logger } from '../lib/logger.js';
 import {
@@ -10,10 +10,17 @@ import {
   type CreateProcedureInput,
   type ProcedureBody,
 } from './procedure-body-schema';
+import {
+  publicCategory,
+  type PublicCategory,
+} from './categories';
 
 // Wire shape returned by the API. Same fields as the row, with Date
 // serialised to ISO and the JSON bodies parsed back to objects so the
-// frontend can render without a second JSON.parse.
+// frontend can render without a second JSON.parse. category is the joined
+// Category row — null when the procedure has no category (the row's
+// category_id is null) or when the category was archived after this
+// procedure was created (FK SET NULL).
 export interface PublicProcedure {
   id: string;
   slug: string;
@@ -21,7 +28,7 @@ export interface PublicProcedure {
   titleEs: string;
   purposeEn: string;
   purposeEs: string;
-  categoryKey: string;
+  category: PublicCategory | null;
   status: ProcedureStatus;
   bodyEn: ProcedureBody;
   bodyEs: ProcedureBody;
@@ -41,8 +48,6 @@ export function parseStoredBody(
   const parsed = procedureBodySchema.safeParse(raw);
   if (parsed.success) return parsed.data;
   const first = parsed.error.issues[0];
-  // Snapshot the bad shape for diagnostics: type + shallow keys/array-ness.
-  // Avoid logging raw user-authored strings (could be long).
   const shape =
     raw === null
       ? 'null'
@@ -57,7 +62,14 @@ export function parseStoredBody(
   return { blocks: [] };
 }
 
-export function publicProcedure(p: Readonly<Procedure>): PublicProcedure {
+// Drizzle's leftJoin selects return one row per procedure with the joined
+// category (or null). publicProcedure takes that row shape directly.
+export function publicProcedure(
+  row: Readonly<typeof procedures.$inferSelect> & {
+    category: typeof categories.$inferSelect | null;
+  },
+): PublicProcedure {
+  const p = row;
   return {
     id: p.id,
     slug: p.slug,
@@ -65,7 +77,7 @@ export function publicProcedure(p: Readonly<Procedure>): PublicProcedure {
     titleEs: p.titleEs,
     purposeEn: p.purposeEn,
     purposeEs: p.purposeEs,
-    categoryKey: p.categoryKey,
+    category: p.category ? publicCategory(p.category) : null,
     status: p.status,
     bodyEn: parseStoredBody(p.blocksEn, `${p.id}/blocksEn`),
     bodyEs: parseStoredBody(p.blocksEs, `${p.id}/blocksEs`),
@@ -117,9 +129,6 @@ export async function createProcedure(
   input: CreateProcedureInput,
   actor: { employeeId: string },
 ): Promise<PublicProcedure> {
-  // Defensive re-validation. The controller has already parsed, but the
-  // service is the public boundary (CLI, future workers) — re-validate here
-  // so a future caller bypassing the controller still gets the contract.
   const bodyEn = procedureBodySchema.parse(input.bodyEn);
   const bodyEs = procedureBodySchema.parse(input.bodyEs);
 
@@ -137,6 +146,30 @@ export async function createProcedure(
   assertCriticalStepsHaveLimits(bodyEn.blocks, 'en');
   assertCriticalStepsHaveLimits(bodyEs.blocks, 'es');
 
+  // Verify the picked category exists and isn't archived. The FK has
+  // SET NULL semantics — an invalid id would corrupt the row silently — so
+  // we surface a clean 400 / 404 here.
+  if (input.categoryId !== null) {
+    const [cat] = await db
+      .select({
+        id: categories.id,
+        isArchived: categories.isArchived,
+      })
+      .from(categories)
+      .where(eq(categories.id, input.categoryId))
+      .limit(1);
+    if (!cat) {
+      throw new ServiceError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
+    }
+    if (cat.isArchived) {
+      throw new ServiceError(
+        400,
+        'CATEGORY_ARCHIVED',
+        'Cannot assign an archived category to a procedure',
+      );
+    }
+  }
+
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
 
@@ -147,7 +180,7 @@ export async function createProcedure(
     titleEs: input.titleEs,
     purposeEn: input.purposeEn,
     purposeEs: input.purposeEs,
-    categoryKey: input.categoryKey,
+    categoryId: input.categoryId,
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
@@ -155,14 +188,21 @@ export async function createProcedure(
   });
 
   const [row] = await db
-    .select()
+    .select({
+      proc: procedures,
+      category: categories,
+    })
     .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
     .where(eq(procedures.id, id))
     .limit(1);
   if (!row) {
     throw new ServiceError(500, 'INTERNAL_ERROR', 'Inserted procedure not found');
   }
-  return publicProcedure(row);
+  return publicProcedure({
+    ...row.proc,
+    category: row.category,
+  });
 }
 
 /** Admin-only list of procedures. Newest first. Optionally filtered by status
@@ -171,13 +211,19 @@ export async function createProcedure(
 export async function listProcedures(
   filter: { status?: ProcedureStatus } = {},
 ): Promise<PublicProcedure[]> {
-  const where = filter.status ? eq(procedures.status, filter.status) : undefined;
+  const conditions = [];
+  if (filter.status) {
+    conditions.push(eq(procedures.status, filter.status));
+  }
   const rows = await db
-    .select()
+    .select({ proc: procedures, category: categories })
     .from(procedures)
-    .where(where)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(procedures.updatedAt));
-  return rows.map(publicProcedure);
+  return rows.map((row) =>
+    publicProcedure({ ...row.proc, category: row.category }),
+  );
 }
 
 /** Fetch a single procedure by slug (used by the public doc view). Returns
@@ -188,11 +234,13 @@ export async function getProcedureBySlug(
   slug: string,
 ): Promise<PublicProcedure | null> {
   const [row] = await db
-    .select()
+    .select({ proc: procedures, category: categories })
     .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
     .where(eq(procedures.slug, slug))
     .limit(1);
-  return row ? publicProcedure(row) : null;
+  if (!row) return null;
+  return publicProcedure({ ...row.proc, category: row.category });
 }
 
 function assertRecipeIngredientsAlign(blocks: Block[], lang: 'en' | 'es'): void {

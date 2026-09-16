@@ -71,6 +71,13 @@
       "when": 1789475402796,
       "tag": "0010_talented_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789561389005,
+      "tag": "0011_clumsy_sphinx",
+      "breakpoints": true
     }
   ]
 }

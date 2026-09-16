@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { createProcedureInputSchema } from '../services/procedure-body-schema';
 import * as proceduresService from '../services/procedures';
+import * as categoriesService from '../services/categories';
 import { handleServiceError } from '../lib/handle-service-error';
 import { procedureStatuses, type ProcedureStatus } from '../db/schema';
 
@@ -132,6 +133,179 @@ export async function getProcedure(
       return;
     }
     res.status(200).json({ procedure });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ===========================================================================
+// Categories — manager-defined, FK'd from procedures
+// ===========================================================================
+//
+// Mounted at /api/admin/library/categories (requireAuth + requireAdmin).
+// Public read endpoint for any logged-in employee is in
+// controllers/procedures.ts → GET /api/procedures/categories.
+
+const categoryCreateSchema = z.object({
+  locationId: z.string().min(1),
+  slug: z.string().min(1).max(80),
+  nameEn: z.string().min(1).max(200),
+  nameEs: z.string().min(1).max(200),
+});
+
+const categoryPatchSchema = z.object({
+  nameEn: z.string().min(1).max(200).optional(),
+  nameEs: z.string().min(1).max(200).optional(),
+  isArchived: z.boolean().optional(),
+});
+
+// ---------- GET /api/admin/library/categories -------------------------------
+//
+// Query: ?locationId=<uuid>&includeArchived=true|false (default false).
+// Returns: { categories: PublicCategory[] } (createdAt ASC, slug ASC).
+export async function listCategoriesAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : '';
+  if (locationId.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing locationId' },
+    });
+    return;
+  }
+  const includeArchived = req.query.includeArchived === 'true';
+  try {
+    const cats = await categoriesService.listCategories({
+      locationId,
+      includeArchived,
+    });
+    res.status(200).json({ categories: cats });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/library/categories ------------------------------
+//
+// Body: { locationId, slug, nameEn, nameEs }. Returns { category } at 201.
+// 409 CATEGORY_SLUG_TAKEN when an active row at the same location already
+// carries this slug.
+export async function createCategoryAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const parsed = categoryCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const cat = await categoriesService.createCategory(parsed.data, {
+      employeeId: req.employee.id,
+    });
+    res.status(201).json({ category: cat });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- PATCH /api/admin/library/categories/:id --------------------------
+//
+// Body: any of { nameEn, nameEs, isArchived }. Id is the UUID, not the slug.
+// 404 CATEGORY_NOT_FOUND, 400 INVALID_INPUT on bad shape / empty patch.
+export async function updateCategoryAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing category id' },
+    });
+    return;
+  }
+  const parsed = categoryPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const cat = await categoriesService.updateCategory(id, parsed.data);
+    res.status(200).json({ category: cat });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/library/categories/:id/archive ------------------
+//
+// Idempotent soft archive. Flips isArchived=true.
+export async function archiveCategoryAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing category id' },
+    });
+    return;
+  }
+  try {
+    const cat = await categoriesService.archiveCategory(id);
+    res.status(200).json({ category: cat });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- GET /api/procedures/categories?locationId= ----------------------
+//
+// Read-only, mounted under /api/procedures (requireAuth only — any logged-in
+// employee, admin or cook). Returns the active categories for the location
+// so the employee dashboard tiles, the editor dropdown, and the procedure
+// reader can populate without an admin round-trip. ?includeArchived=true
+// returns archived rows too (manager-only use case; employee surfaces should
+// never ask for them).
+export async function listCategoriesPublic(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+  const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : '';
+  if (locationId.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing locationId' },
+    });
+    return;
+  }
+  const includeArchived = req.query.includeArchived === 'true';
+  try {
+    const cats = await categoriesService.listCategories({
+      locationId,
+      includeArchived,
+    });
+    res.status(200).json({ categories: cats });
   } catch (err) {
     if (!handleServiceError(err, res)) throw err;
   }

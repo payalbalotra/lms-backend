@@ -176,7 +176,10 @@ export const createProcedureInputSchema = z.object({
   titleEs: z.string().min(1).max(200),
   purposeEn: z.string().min(1),
   purposeEs: z.string().min(1),
-  categoryKey: z.string().min(1),
+  // UUID of the joined category from the categories table. Nullable —
+  // the procedure is allowed to live without a category (e.g. right after
+  // a category is archived and before the manager re-assigns it).
+  categoryId: z.string().uuid().nullable(),
   status: z.enum(['draft', 'published']).default('draft'),
   bodyEn: procedureBodySchema,
   bodyEs: procedureBodySchema,
