@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { createProcedureInputSchema } from '../services/procedure-body-schema';
 import * as proceduresService from '../services/procedures';
-import { ServiceError } from '../services/errors';
+import { handleServiceError } from '../lib/handle-service-error';
 import { procedureStatuses, type ProcedureStatus } from '../db/schema';
 
 function invalidInput(
@@ -25,18 +25,6 @@ function unauthenticated(res: Response): void {
   res.status(401).json({
     error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
   });
-}
-
-// Translate ServiceError throws from the service layer into a JSON error
-// response. Mirrors the helper in controllers/admin/employees.ts.
-function handleServiceError(err: unknown, res: Response): boolean {
-  if (err instanceof ServiceError) {
-    res.status(err.status).json({
-      error: { code: err.code, message: err.message },
-    });
-    return true;
-  }
-  return false;
 }
 
 // ---------- POST /api/admin/library/procedures ------------------------------

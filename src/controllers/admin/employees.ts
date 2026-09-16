@@ -13,7 +13,7 @@ import {
 } from '../../db/schema';
 import { createInvite } from '../../auth/invites';
 import { uniqueEmployeeName } from '../../services/employee-name';
-import { ServiceError } from '../../services/errors';
+import { handleServiceError } from '../../lib/handle-service-error';
 import * as stationsService from '../../services/stations';
 import * as rolesService from '../../services/roles';
 import * as locationsService from '../../services/locations';
@@ -93,18 +93,6 @@ function unauthenticated(res: Response): void {
   res.status(401).json({
     error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
   });
-}
-
-// Catch ServiceError throws from the service layer and translate to HTTP JSON.
-// Returns true if handled, false if the caller should re-throw.
-function handleServiceError(err: unknown, res: Response): boolean {
-  if (err instanceof ServiceError) {
-    res.status(err.status).json({
-      error: { code: err.code, message: err.message },
-    });
-    return true;
-  }
-  return false;
 }
 
 // ============================================================================
