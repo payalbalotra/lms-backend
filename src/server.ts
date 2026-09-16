@@ -37,32 +37,33 @@ app.use(express.json({ limit: '256kb' }));
 // the value itself is never logged (see /DESIGN memory: log-preferences.md).
 app.use(requestId);
 
-// One log line per request, written when the response finishes.
-// This is the ONLY place request logging happens — pino-http is gone
-// so there is no req.log to accidentally dump headers/cookies.
-//
-// Output is sent BOTH to pino (best-effort stdout) AND appended to
-// backend.log via fs.appendFileSync. On Windows + tsx-watch, fd 1 writes
-// from inside request callbacks get swallowed by the child-process pipe
-// even with pino.destination({ sync: true }), so the file is the source
-// of truth. Tail it from another terminal:
-//
-//   Get-Content backend.log -Tail 50 -Wait
+// Per-request log: console.log for the terminal + appendFileSync as the
+// source of truth (fd 1 is unreliable inside res.on('finish') on this box).
 const REQUEST_LOG_FILE = 'backend.log';
+
+function formatTimestamp(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
 
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const ms = Date.now() - start;
     const url = req.originalUrl ?? req.url;
-    const line = `${req.method} ${url} -> ${res.statusCode} (${ms}ms)`;
-    if (res.statusCode >= 500) logger.error(line);
-    else if (res.statusCode >= 400) logger.warn(line);
-    else logger.info(line);
+    const code = res.statusCode;
+    const level = code >= 500 ? 'ERROR' : code >= 400 ? 'WARN ' : 'INFO ';
+    const line =
+      `${formatTimestamp(new Date())} ${level} ` +
+      `${req.method} ${url} -> ${code} (${ms}ms)`;
+    console.log(line);
     try {
       appendFileSync(REQUEST_LOG_FILE, `${line}\n`);
     } catch {
-      // never throw from logging
+      /* never throw from logging */
     }
   });
   next();

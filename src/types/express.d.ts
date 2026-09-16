@@ -25,10 +25,11 @@ declare global {
       id?: string;
       log?: Logger;
       /**
-       * Populated by `requireAdmin`. Only present on routes that mount the
-       * middleware. Front controllers may narrow with `req.employee!.id`.
+       * Populated by `requireAuth` with `{ id, locationId, roleId }` so any
+       * controller behind any auth-only mount can read basic identity. Routes
+       * that mount `requireAdmin` get the full AuthedEmployee attached too.
        */
-      employee?: AuthedEmployee;
+      employee?: Partial<AuthedEmployee> & { id: string; locationId: string; roleId: string };
     }
   }
 }

@@ -4,18 +4,13 @@ import {
   timestamp,
   integer,
   boolean,
+  jsonb,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
 import { sql as drizzleSql } from 'drizzle-orm';
-
-// Re-export Better Auth tables (user/session/account/verification) so the
-// rest of the codebase can keep importing everything from `@/db/schema`.
-// The auth-schema file is CLI-generated and may be regenerated on upgrade
-// — do not hand-edit it.
 export * from './auth-schema';
-// Named import for the `employees.userId` FK reference — `export *` does not
-// create a local binding, so we need this in addition.
+
 import { user } from './auth-schema';
 
 // ============================================================================
@@ -75,11 +70,7 @@ export const employees = pgTable(
   'employees',
   {
     id: text('id').primaryKey(),
-    // FK to Better Auth's user table. Nullable because the employee row is
-    // created first (admin form), and the Better Auth user is provisioned
-    // later when the employee activates via the 5-digit code.
-    // requireAuth treats a NULL userId as "no active employee" → SESSION_INVALID.
-    // onDelete:cascade remains so deleting a Better Auth user removes the LMS row.
+    
     userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     // LOGIN identifier. Compared case-insensitively at the route layer.
     name: text('name').notNull(),
@@ -147,6 +138,39 @@ export const invites = pgTable(
 );
 
 // ============================================================================
+// Library: procedures (SOPs, recipes, training chapters)
+// ============================================================================
+
+export const procedureStatuses = ['draft', 'published'] as const;
+export type ProcedureStatus = (typeof procedureStatuses)[number];
+
+export const procedures = pgTable(
+  'procedures',
+  {
+    id: text('id').primaryKey(),
+    slug: text('slug').notNull(),
+    titleEn: text('title_en').notNull(),
+    titleEs: text('title_es').notNull(),
+    purposeEn: text('purpose_en').notNull(),
+    purposeEs: text('purpose_es').notNull(),
+    categoryKey: text('category_key').notNull(),
+    status: text('status').$type<ProcedureStatus>().notNull().default('draft'),
+    blocksEn: jsonb('blocks_en').$type<unknown>().notNull(),
+    blocksEs: jsonb('blocks_es').$type<unknown>().notNull(),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
+    byCategory: index('procedures_category_idx').on(t.categoryKey),
+    byStatus: index('procedures_status_idx').on(t.status),
+  }),
+);
+
+// ============================================================================
 // Inferred types
 // ============================================================================
 
@@ -157,3 +181,5 @@ export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;
 export type Invite = typeof invites.$inferSelect;
 export type NewInvite = typeof invites.$inferInsert;
+export type Procedure = typeof procedures.$inferSelect;
+export type NewProcedure = typeof procedures.$inferInsert;

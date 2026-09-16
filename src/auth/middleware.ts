@@ -54,8 +54,17 @@ export async function requireAuth(
 
   // 2. Resolve the Better Auth user to an LMS employee. The user↔employee
   //    link is the `employees.userId` FK; employees are 1:1 with users.
+  //    We load the columns every controller downstream needs (id, locationId,
+  //    roleId) so non-admin routes that only mount requireAuth still see a
+  //    populated `req.employee`. requireAdmin re-loads the full row and
+  //    overwrites this when it runs.
   const [employee] = await db
-    .select({ id: employees.id, status: employees.status })
+    .select({
+      id: employees.id,
+      status: employees.status,
+      locationId: employees.locationId,
+      roleId: employees.roleId,
+    })
     .from(employees)
     .where(eq(employees.userId, session.user.id))
     .limit(1);
@@ -73,6 +82,11 @@ export async function requireAuth(
   req.session = {
     id: session.session.id,
     employeeId: employee.id,
+  };
+  req.employee = {
+    id: employee.id,
+    locationId: employee.locationId,
+    roleId: employee.roleId,
   };
   req.deviceMode =
     req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
