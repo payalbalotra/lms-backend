@@ -1,7 +1,7 @@
-import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ServiceError } from './errors';
-import { buildKey, getS3Client, publicUrlFor } from './r2';
+import { buildKey, getS3Client, publicUrlFor, type UploadFolder } from './r2';
 
 const IMAGE_MIME = new Set([
   'image/jpeg',
@@ -14,17 +14,34 @@ const VIDEO_MIME = new Set([
   'video/webm',
   'video/quicktime',
 ]);
+// Document imports for the SOP wizard. PDF + DOCX cover the document
+// types a manager typically has on hand; JPG/PNG cover recipe photos
+// (Gemini is multimodal so we don't need a separate OCR library for
+// v1); text covers plain-text or markdown procedures. Mirrors the
+// upload-tile copy under admin.library.new.sidebar.aiImportFormats.
+const DOCUMENT_MIME = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+  'text/plain',
+  'text/markdown',
+]);
 
 const MAX_FILENAME = 255;
 const MAX_IMAGE_BYTES = Number(process.env.R2_UPLOAD_MAX_BYTES ?? 10485760);
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+// 20 MB matches the wizard's "up to 20 MB" copy and is large enough
+// for any reasonable SOP PDF or recipe photo. Tunable via env so ops
+// can raise it without a code change.
+const MAX_DOCUMENT_BYTES = Number(process.env.R2_DOCUMENT_MAX_BYTES ?? 20971520);
 const TTL_SECONDS = Number(process.env.R2_UPLOAD_TTL_SECONDS ?? 600);
 const BUCKET = process.env.R2_BUCKET ?? '';
 const PUBLIC_BASE = (process.env.R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
 
 // Matches keys produced by buildKey: <folder>/<yyyy>/<mm>/<uuid>.<ext>.
 // The uuid leaf guards against callers trying to delete arbitrary paths.
-const KEY_RE = /^(images|videos)\/\d{4}\/\d{2}\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-z0-9]{1,5}$/;
+const KEY_RE = /^(images|videos|documents)\/\d{4}\/\d{2}\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-z0-9]{1,5}$/;
 
 export interface PresignedUpload {
   uploadUrl: string;
@@ -61,8 +78,30 @@ export async function requestVideoUpload(input: {
   });
 }
 
+// Presigned PUT for a manager's SOP source document (PDF/DOCX/recipe
+// photo). The wizard uploads here, then POSTs the publicUrl to
+// POST /api/admin/library/import which downloads the object from R2
+// again, extracts text, and asks Gemini to populate the procedure
+// form fields. Documents have their own bucket folder + size cap so
+// a misconfigured client can't dump a 200 MB video into the wrong
+// path, and so we can apply different lifecycle rules later (keep
+// source documents longer than edit images).
+export async function requestDocumentUpload(input: {
+  filename: string;
+  contentType: string;
+  size: number;
+}): Promise<PresignedUpload> {
+  return presign({
+    folder: 'documents',
+    input,
+    mimeAllowlist: DOCUMENT_MIME,
+    maxBytes: MAX_DOCUMENT_BYTES,
+    tooLargeMessage: `Document must be ${MAX_DOCUMENT_BYTES} bytes or smaller`,
+  });
+}
+
 async function presign(args: {
-  folder: 'images' | 'videos';
+  folder: UploadFolder;
   input: { filename: string; contentType: string; size: number };
   mimeAllowlist: Set<string>;
   maxBytes: number;
@@ -80,7 +119,7 @@ async function presign(args: {
     throw new ServiceError(
       400,
       'UPLOAD_INVALID_MIME',
-      `Unsupported ${folder === 'images' ? 'image' : 'video'} type: ${input.contentType}`,
+      `Unsupported ${folder} type: ${input.contentType}`,
     );
   }
   if (!Number.isFinite(input.size) || input.size <= 0 || input.size > maxBytes) {
@@ -133,4 +172,42 @@ export async function requestDeleteUpload(input: { url: string }): Promise<{ ok:
   }
   await getS3Client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
   return { ok: true };
+}
+
+// Downloads a previously-uploaded object as a Buffer. Used by the
+// document-extract pipeline to fetch the file the manager just
+// uploaded, parse text out of it, and feed an LLM. Restricted to keys
+// produced by buildKey() — refuses arbitrary paths the same way
+// requestDeleteUpload does, so the import endpoint can't be used as
+// a generic object fetcher.
+export interface DownloadedObject {
+  body: Buffer;
+  contentType: string | undefined;
+}
+
+export async function downloadUploadedObject(input: { url: string }): Promise<DownloadedObject> {
+  if (!PUBLIC_BASE) {
+    throw new ServiceError(500, 'UPLOAD_NOT_CONFIGURED', 'R2 bucket not configured');
+  }
+  if (!input.url.startsWith(`${PUBLIC_BASE}/`)) {
+    throw new ServiceError(404, 'UPLOAD_NOT_OWNED', 'URL is not from this bucket');
+  }
+  const key = input.url.slice(PUBLIC_BASE.length + 1);
+  if (!KEY_RE.test(key)) {
+    throw new ServiceError(400, 'UPLOAD_INVALID_KEY', 'Key is not from a presigned upload');
+  }
+  if (!BUCKET) {
+    throw new ServiceError(500, 'UPLOAD_NOT_CONFIGURED', 'R2 bucket not configured');
+  }
+  const result = await getS3Client().send(
+    new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+  );
+  if (!result.Body) {
+    throw new ServiceError(500, 'UPLOAD_EMPTY', 'Object has no body');
+  }
+  const bytes = await result.Body.transformToByteArray();
+  return {
+    body: Buffer.from(bytes),
+    contentType: result.ContentType,
+  };
 }

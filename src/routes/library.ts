@@ -6,6 +6,7 @@ const router = Router();
 // ---- Procedures ------------------------------------------------------------
 router.post('/procedures', libraryController.createProcedure);
 router.get('/procedures', libraryController.listProcedures);
+router.post('/import', libraryController.importProcedure);
 
 // ---- Categories (manager-defined) -----------------------------------------
 router.get('/categories', libraryController.listCategoriesAdmin);

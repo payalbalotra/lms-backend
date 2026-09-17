@@ -1,7 +1,12 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { handleServiceError } from '../lib/handle-service-error';
-import { requestDeleteUpload, requestImageUpload, requestVideoUpload } from '../services/uploads';
+import {
+  requestDeleteUpload,
+  requestDocumentUpload,
+  requestImageUpload,
+  requestVideoUpload,
+} from '../services/uploads';
 
 const presignInputSchema = z.object({
   filename: z.string().min(1).max(255),
@@ -33,6 +38,17 @@ export async function presignVideoUpload(
   res: Response,
 ): Promise<void> {
   await presignHandler(req, res, requestVideoUpload);
+}
+
+// POST /api/admin/uploads/document
+// Body: { filename, contentType, size }
+// Auth: requireAuth + requireAdmin. For the SOP wizard's "Import
+// document with AI" flow — see services/document-extract.ts.
+export async function presignDocumentUpload(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  await presignHandler(req, res, requestDocumentUpload);
 }
 
 // DELETE /api/admin/uploads?url=...

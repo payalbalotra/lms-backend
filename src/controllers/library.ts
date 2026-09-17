@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createProcedureInputSchema } from '../services/procedure-body-schema';
 import * as proceduresService from '../services/procedures';
 import * as categoriesService from '../services/categories';
+import { extractProcedureFromDocument } from '../services/document-extract';
 import { handleServiceError } from '../lib/handle-service-error';
 import { procedureStatuses, type ProcedureStatus } from '../db/schema';
 
@@ -96,6 +97,59 @@ export async function listProcedures(
   try {
     const procedures = await proceduresService.listProcedures({ status });
     res.status(200).json({ procedures });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ===========================================================================
+// AI import — manager uploads a source doc (PDF/DOCX/JPG/PNG/text) to R2
+// via the document-presign endpoint, then posts the resulting publicUrl
+// here. We download the object back, pull text out (or pass image bytes
+// to Gemini multimodal), ask Gemini to populate the extracted-procedure
+// schema, return the result so the wizard can render a per-block preview
+// before the manager saves.
+// ===========================================================================
+
+const importInputSchema = z.object({
+  publicUrl: z.string().min(1),
+  filename: z.string().min(1).max(255),
+  contentType: z.string().min(1).max(127),
+  procedureType: z.enum(['recipe', 'station', 'cleaning', 'general']),
+});
+
+// ---------- POST /api/admin/library/import ---------------------------------
+//
+// Body: { publicUrl, filename, contentType, procedureType }
+// Auth: requireAuth + requireAdmin (mount in routes/library.ts).
+// Returns: { extraction } at 200. The wizard applies the extraction to
+// FormSnapshot; this endpoint does not write to the DB.
+//
+// Errors:
+//   400 IMPORT_UNSUPPORTED_TYPE — contentType not in the document allowlist.
+//   400 INVALID_INPUT — body shape mismatch.
+//   502 EXTRACTION_INVALID — Gemini returned something we couldn't parse or
+//      that didn't pass the Zod schema. Manager can retry.
+//   503 EXTRACTION_FAILED — Gemini transport / SDK error.
+//   503 IMPORT_NOT_CONFIGURED — GOOGLE_AI_API_KEY missing on the server.
+export async function importProcedure(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!req.employee) {
+    unauthenticated(res);
+    return;
+  }
+
+  const parsed = importInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+
+  try {
+    const extraction = await extractProcedureFromDocument(parsed.data);
+    res.status(200).json({ extraction });
   } catch (err) {
     if (!handleServiceError(err, res)) throw err;
   }

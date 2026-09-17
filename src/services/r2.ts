@@ -38,10 +38,12 @@ export function getS3Client(): S3Client {
 // <folder>/<yyyy>/<mm>/<uuid>.<ext> — month-sharded for cheap future
 // per-month lifecycle policies; uuid leaf to avoid collisions.
 // `folder` is one of the allow-listed prefixes the upload service passes
-// (e.g. 'images', 'videos'); kept short so the key stays under S3's
-// 1024-byte limit even with a deep prefix.
+// (e.g. 'images', 'videos', 'documents'); kept short so the key stays
+// under S3's 1024-byte limit even with a deep prefix.
+export type UploadFolder = 'images' | 'videos' | 'documents';
+
 export function buildKey(
-  folder: 'images' | 'videos',
+  folder: UploadFolder,
   _contentType: string,
   originalName: string,
 ): string {
