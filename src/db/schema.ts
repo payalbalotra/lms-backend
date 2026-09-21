@@ -7,7 +7,6 @@ import {
   jsonb,
   uniqueIndex,
   index,
-  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { sql as drizzleSql } from 'drizzle-orm';
 export * from './auth-schema';
@@ -87,9 +86,6 @@ export const categories = pgTable(
 export const employeeStatus = ['pending', 'active', 'deactivated'] as const;
 export type EmployeeStatus = (typeof employeeStatus)[number];
 
-export const clearanceLevels = ['general', 'station', 'confidential', 'master'] as const;
-export type ClearanceLevel = (typeof clearanceLevels)[number];
-
 export const languagePrefs = ['en', 'es'] as const;
 export type LanguagePref = (typeof languagePrefs)[number];
 
@@ -102,7 +98,7 @@ export const employees = pgTable(
   'employees',
   {
     id: text('id').primaryKey(),
-    
+
     userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     // LOGIN identifier. Compared case-insensitively at the route layer.
     name: text('name').notNull(),
@@ -114,7 +110,11 @@ export const employees = pgTable(
       .notNull()
       .references(() => roles.id, { onDelete: 'restrict' }),
     stationId: text('station_id').references(() => stations.id, { onDelete: 'set null' }),
-    clearanceLevel: text('clearance_level').$type<ClearanceLevel>().notNull(),
+    // Admin authority is implied by roleId === 'role-master' (checked at
+    // requireAdmin). No separate clearance column — every employee has a
+    // role, and one of those roles is the admin role. The field used to
+    // exist (clearance_level) and was dropped in migration 0015 because
+    // it duplicated information already carried by role membership.
     languagePref: text('language_pref').$type<LanguagePref>().notNull().default('en'),
     status: text('status').$type<EmployeeStatus>().notNull().default('pending'),
     passwordHash: text('password_hash'),
@@ -202,97 +202,48 @@ export const procedures = pgTable(
     quizId: text('quiz_id').references(() => quizzes.id, { onDelete: 'set null' }),
     linkedTrainingId: text('linked_training_id'), // no FK — stage 3
     quizMode: text('quiz_mode').notNull().default('training'),
+    // Stage 2 final wiring (added 0014). `version` is the monotonic publish
+    // counter stamped on every publish inside a SELECT FOR UPDATE — the QR
+    // code on the printed SOP points at procedures.slug?version=N so a
+    // re-publish bumps N. `isArchived` is the third state per PROJECT_OVERVIEW
+    // §02: draft → published → archived. Cook-side reads filter out archived;
+    // admin-side library list surfaces them under an opt-in filter chip.
+    version: integer('version').notNull().default(1),
+    isArchived: boolean('is_archived').notNull().default(false),
+    // Access dimensions (added 0015). One nullable FK per dimension — a
+    // procedure is visible to at most ONE location, ONE role, ONE station,
+    // and ONE specific employee. NULL on all four = open to everyone at
+    // the manager's "Everyone" choice on the Access step. SET NULL on every
+    // FK so archiving a location / role / station / employee doesn't hard-
+    // delete the procedure row.
+    accessLocationId: text('access_location_id').references(() => locations.id, {
+      onDelete: 'set null',
+    }),
+    accessRoleId: text('access_role_id').references(() => roles.id, {
+      onDelete: 'set null',
+    }),
+    accessStationId: text('access_station_id').references(() => stations.id, {
+      onDelete: 'set null',
+    }),
+    accessEmployeeId: text('access_employee_id').references(() => employees.id, {
+      onDelete: 'set null',
+    }),
   },
   (t) => ({
     slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
     byCategory: index('procedures_category_idx').on(t.categoryId),
     byStatus: index('procedures_status_idx').on(t.status),
     byQuiz: index('procedures_quiz_id_idx').on(t.quizId),
-  }),
-);
-
-// ============================================================================
-// Library: procedure access (junction tables)
-//
-// A published procedure is visible to a cook when ANY of these is true:
-//   - the cook's locationId is in procedure_locations for the SOP, OR
-//   - the cook's roleId     is in procedure_roles     for the SOP, OR
-//   - the cook's stationId  is in procedure_stations  for the SOP, OR
-//   - the cook's own id     is in procedure_employees for the SOP.
-// A procedure with zero rows across all four junction tables is open to
-// every active employee at the location (the manager's "Everyone" choice
-// on the Access step). Cook-read queries always layer
-// status='published' AND is_archived=false on top of this OR join.
-//
-// Each junction table pairs the procedure with one dimension id; the
-// composite PK prevents duplicate assignments, and the reverse index
-// makes "which procedures does this employee/role/station/location see"
-// a single index lookup. CASCADE on every FK keeps the junction rows
-// in sync when a procedure is deleted (admin-side) or when an employee
-// is deactivated (employee-side).
-// ============================================================================
-
-export const procedureLocations = pgTable(
-  'procedure_locations',
-  {
-    procedureId: text('procedure_id')
-      .notNull()
-      .references(() => procedures.id, { onDelete: 'cascade' }),
-    locationId: text('location_id')
-      .notNull()
-      .references(() => locations.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.procedureId, t.locationId] }),
-    byLocation: index('procedure_locations_location_idx').on(t.locationId),
-  }),
-);
-
-export const procedureRoles = pgTable(
-  'procedure_roles',
-  {
-    procedureId: text('procedure_id')
-      .notNull()
-      .references(() => procedures.id, { onDelete: 'cascade' }),
-    roleId: text('role_id')
-      .notNull()
-      .references(() => roles.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.procedureId, t.roleId] }),
-    byRole: index('procedure_roles_role_idx').on(t.roleId),
-  }),
-);
-
-export const procedureStations = pgTable(
-  'procedure_stations',
-  {
-    procedureId: text('procedure_id')
-      .notNull()
-      .references(() => procedures.id, { onDelete: 'cascade' }),
-    stationId: text('station_id')
-      .notNull()
-      .references(() => stations.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.procedureId, t.stationId] }),
-    byStation: index('procedure_stations_station_idx').on(t.stationId),
-  }),
-);
-
-export const procedureEmployees = pgTable(
-  'procedure_employees',
-  {
-    procedureId: text('procedure_id')
-      .notNull()
-      .references(() => procedures.id, { onDelete: 'cascade' }),
-    employeeId: text('employee_id')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.procedureId, t.employeeId] }),
-    byEmployee: index('procedure_employees_employee_idx').on(t.employeeId),
+    // Supports the admin library list's "show archived" filter — single
+    // index seek for the where clause `is_archived = false|true`.
+    byArchived: index('procedures_archived_idx').on(t.isArchived),
+    // Cook-read WHERE matches the cook's profile against any of the four
+    // access_*_id columns; one b-tree per column makes each match an index
+    // seek. status + isArchived layered on top via byStatus / byArchived.
+    byAccessLocation: index('procedures_access_location_idx').on(t.accessLocationId),
+    byAccessRole: index('procedures_access_role_idx').on(t.accessRoleId),
+    byAccessStation: index('procedures_access_station_idx').on(t.accessStationId),
+    byAccessEmployee: index('procedures_access_employee_idx').on(t.accessEmployeeId),
   }),
 );
 
@@ -363,14 +314,6 @@ export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
 export type Procedure = typeof procedures.$inferSelect;
 export type NewProcedure = typeof procedures.$inferInsert;
-export type ProcedureLocation = typeof procedureLocations.$inferSelect;
-export type NewProcedureLocation = typeof procedureLocations.$inferInsert;
-export type ProcedureRole = typeof procedureRoles.$inferSelect;
-export type NewProcedureRole = typeof procedureRoles.$inferInsert;
-export type ProcedureStation = typeof procedureStations.$inferSelect;
-export type NewProcedureStation = typeof procedureStations.$inferInsert;
-export type ProcedureEmployee = typeof procedureEmployees.$inferSelect;
-export type NewProcedureEmployee = typeof procedureEmployees.$inferInsert;
 export type Quiz = typeof quizzes.$inferSelect;
 export type NewQuiz = typeof quizzes.$inferInsert;
 export type QuizAttempt = typeof quizAttempts.$inferSelect;
