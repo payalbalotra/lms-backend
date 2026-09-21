@@ -4,10 +4,23 @@ import { db } from '../db/client';
 import { employees } from '../db/schema';
 import { auth } from './better-auth';
 
+// Dev-only bypass flag. When NODE_ENV is 'development' (which it is during
+// `pnpm dev` and any test run launched from this repo), requireAuth honours
+// an X-Test-Employee-Id header and short-circuits the Better Auth cookie
+// check. Production / staging / preview runs leave NODE_ENV at anything else
+// and the bypass is dead code.
+//
+// This exists so curl-based smoke tests can hit admin + cook endpoints
+// without a login round-trip. The test seed creates two stable employees
+// (emp-admin-test, emp-cook-test) — pass the right id in the header and
+// the request is treated as that user. requireAdmin reads the employee's
+// role id, so the admin/cook split is honoured.
+const DEV_AUTH_BYPASS = process.env.NODE_ENV === 'development';
+
 /**
  * Request shape after `requireAuth` succeeds. `requireAdmin` consumes
- * `session.employeeId` to look up the row and apply the clearance check,
- * so this contract must stay stable.
+ * `session.employeeId` to look up the row and apply the role-membership
+ * check, so this contract must stay stable.
  */
 export interface AuthedRequest extends Request {
   session?: {
@@ -30,6 +43,46 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
+  // 0. Dev-only header bypass — see DEV_AUTH_BYPASS above. Skip the cookie
+  //    dance entirely when X-Test-Employee-Id is set in development. The
+  //    employee id must still resolve to an active row in the DB; otherwise
+  //    we fall through to the real auth path so the error message is the
+  //    usual SESSION_INVALID rather than a misleading "user not found".
+  if (DEV_AUTH_BYPASS) {
+    const testEmployeeId = req.headers['x-test-employee-id'];
+    if (typeof testEmployeeId === 'string' && testEmployeeId.length > 0) {
+      const [employee] = await db
+        .select({
+          id: employees.id,
+          status: employees.status,
+          locationId: employees.locationId,
+          roleId: employees.roleId,
+          stationId: employees.stationId,
+        })
+        .from(employees)
+        .where(eq(employees.id, testEmployeeId))
+        .limit(1);
+
+      if (employee && employee.status === 'active') {
+        req.session = {
+          id: `dev-bypass:${employee.id}`,
+          employeeId: employee.id,
+        };
+        req.employee = {
+          id: employee.id,
+          locationId: employee.locationId,
+          roleId: employee.roleId,
+          stationId: employee.stationId,
+        };
+        req.deviceMode =
+          req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
+        next();
+        return;
+      }
+      // Unknown / inactive test id falls through to the real auth path.
+    }
+  }
+
   // 1. Ask Better Auth if the request carries a valid session cookie.
   //    getSession is DB-backed (or reads from the in-memory cookieCache when
   //    enabled in better-auth.ts). Returns null when there is no cookie,

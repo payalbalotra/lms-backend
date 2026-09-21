@@ -5,8 +5,13 @@ import { employees } from '../db/schema';
 import type { AuthedRequest } from '../auth/middleware';
 import type { AuthedEmployee } from '../types/express';
 
-// Clearance level permitted to hit /admin routes.
-const ADMIN_CLEARANCE = 'master' as const;
+// Role id whose members are permitted to hit /admin routes. The seed
+// creates 'role-master' as the admin role; everyone else is denied.
+// The previous design used a `clearance_level` column on the employee
+// row; migration 0015 dropped it because admin authority is just
+// role-membership — every employee already has a role, and one of
+// those roles IS the admin role. One source of truth.
+const ADMIN_ROLE_ID = 'role-master' as const;
 
 export async function requireAdmin(
   req: AuthedRequest,
@@ -27,7 +32,6 @@ export async function requireAdmin(
       locationId: employees.locationId,
       roleId: employees.roleId,
       stationId: employees.stationId,
-      clearanceLevel: employees.clearanceLevel,
       languagePref: employees.languagePref,
       status: employees.status,
     })
@@ -42,11 +46,11 @@ export async function requireAdmin(
     return;
   }
 
-  if (row.clearanceLevel !== ADMIN_CLEARANCE || row.status !== 'active') {
+  if (row.roleId !== ADMIN_ROLE_ID || row.status !== 'active') {
     res.status(403).json({
       error: {
         code: 'FORBIDDEN',
-        message: 'Admin clearance required',
+        message: 'Admin role required',
       },
     });
     return;
@@ -58,7 +62,6 @@ export async function requireAdmin(
     locationId: row.locationId,
     roleId: row.roleId,
     stationId: row.stationId,
-    clearanceLevel: row.clearanceLevel,
     languagePref: row.languagePref,
     status: row.status,
   };

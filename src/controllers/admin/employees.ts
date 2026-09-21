@@ -29,7 +29,6 @@ const createSchema = z.object({
   locationId: z.string().min(1).max(64),
   roleId: z.string().min(1).max(64),
   stationId: z.string().min(1).max(64).nullable().optional(),
-  clearanceLevel: clearanceEnum,
   employeeCode: z.string().trim().min(1).max(32).nullable().optional(),
   languagePref: z.enum(['en', 'es']).optional().default('en'),
 });
@@ -181,7 +180,6 @@ export async function createEmployee(
     locationId: input.locationId,
     roleId: input.roleId,
     stationId: input.stationId ?? null,
-    clearanceLevel: input.clearanceLevel,
     languagePref: input.languagePref,
     status: 'pending',
     passwordHash: null,
@@ -703,7 +701,6 @@ function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
     locationId: e.locationId,
     roleId: e.roleId,
     stationId: e.stationId,
-    clearanceLevel: e.clearanceLevel,
     languagePref: e.languagePref,
     status: e.status,
     createdAt: e.createdAt.toISOString(),

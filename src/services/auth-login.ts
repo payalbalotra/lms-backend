@@ -49,7 +49,6 @@ export interface PublicEmployeeShape {
   locationId: string;
   roleId: string;
   stationId: string | null;
-  clearanceLevel: Employee['clearanceLevel'];
   languagePref: Employee['languagePref'];
 }
 
@@ -168,7 +167,6 @@ export function publicEmployeeShape(e: Employee): PublicEmployeeShape {
     locationId: e.locationId,
     roleId: e.roleId,
     stationId: e.stationId,
-    clearanceLevel: e.clearanceLevel,
     languagePref: e.languagePref,
   };
 }

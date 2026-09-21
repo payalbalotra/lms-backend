@@ -1,6 +1,9 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { createProcedureInputSchema } from '../services/procedure-body-schema';
+import {
+  createProcedureInputSchema,
+  updateProcedureInputSchema,
+} from '../services/procedure-body-schema';
 import * as proceduresService from '../services/procedures';
 import type { EmployeeAccessProfile } from '../services/procedures';
 import * as categoriesService from '../services/categories';
@@ -80,6 +83,9 @@ export async function createProcedure(
 // ---------- GET /api/admin/library/procedures -------------------------------
 //
 // Query: ?status=draft|published (optional, returns both by default).
+//         ?includeArchived=true|false (default false — the admin library
+//                                      hides archived rows behind the
+//                                      opt-in filter chip).
 // Returns: { procedures: PublicProcedure[] } newest-first.
 // Admin-only; mounted under requireAuth + requireAdmin in routes/library.ts.
 export async function listProcedures(
@@ -101,10 +107,132 @@ export async function listProcedures(
     }
     status = raw as ProcedureStatus;
   }
+  // Default to hiding archived rows. The service's default is
+  // include-everything so the cook-side read can opt-in independently;
+  // the admin library always hides them unless the manager toggles the
+  // "Show archived" filter chip on.
+  const includeArchived = req.query.includeArchived === 'true';
 
   try {
-    const procedures = await proceduresService.listProcedures({ status });
+    const procedures = await proceduresService.listProcedures({
+      status,
+      includeArchived,
+    });
     res.status(200).json({ procedures });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- GET /api/admin/library/procedures/:id ---------------------------
+//
+// Path: :id (the UUID, not the slug — admin summary route stable-link).
+// Returns: { procedure: PublicProcedure } — 404 NOT_FOUND on unknown id.
+// Admin-only; mounted under requireAuth + requireAdmin. Use this for the
+// /admin/library/[id] read-only summary page. The cook-side read uses the
+// slug-based path under /api/procedures/:slug with the access join.
+export async function getProcedureAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const id = req.params.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing procedure id' },
+    });
+    return;
+  }
+  try {
+    const procedure = await proceduresService.getProcedureById(id);
+    if (!procedure) {
+      res.status(404).json({
+        error: { code: 'NOT_FOUND', message: 'Procedure not found' },
+      });
+      return;
+    }
+    res.status(200).json({ procedure });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- PATCH /api/admin/library/procedures/:id -------------------------
+//
+// Path: :id
+// Body: any subset of { titleEn, titleEs, purposeEn, purposeEs, categoryId,
+// status, bodyEn, bodyEs, quizId, linkedTrainingId, quizMode, locations,
+// roles, stations, employees }. Slug is intentionally NOT patchable. At
+// least one field must be set (Zod refine). 404 PROCEDURE_NOT_FOUND when
+// the id doesn't match. Cross-field validation runs in the service:
+//   - category must exist and not be archived (400 CATEGORY_ARCHIVED)
+//   - quiz must exist when quizId is non-null (404 QUIZ_NOT_FOUND)
+//   - recipe ingredients must align with factors
+//   - critical steps must declare a critical limit
+//   - access list ids must exist (400 *_NOT_FOUND)
+//
+// Returns: { procedure: PublicProcedure } at 200 with the access lists
+// populated.
+//
+// Mounted at /api/admin/library/procedures via routes/library.ts under
+// requireAuth + requireAdmin. This is the wire the wizard's Edit mode
+// calls when the manager hits Save.
+export async function updateProcedureAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const id = req.params.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing procedure id' },
+    });
+    return;
+  }
+  const parsed = updateProcedureInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    invalidInput(res, parsed.error.issues);
+    return;
+  }
+  try {
+    const procedure = await proceduresService.updateProcedure(id, parsed.data);
+    res.status(200).json({ procedure });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ---------- POST /api/admin/library/procedures/:id/archive ------------------
+//
+// Path: :id
+// Idempotent soft-archive. No body required. Flips procedures.is_archived
+// to true; calling twice has the same effect. Unarchive is a separate
+// action via PATCH /procedures/:id with `{ isArchived: false }` once
+// migration 0014 lands and slice D's PATCH path can carry the field on
+// the wire. This endpoint deliberately doesn't take a body to avoid the
+// ambiguity of an "archive or unarchive?" toggle — matches the categories
+// archive endpoint shape.
+//
+// Returns: { procedure: PublicProcedure } at 200 with the joined category
+// + access lists. 404 PROCEDURE_NOT_FOUND when the id doesn't match. Until
+// procedures.is_archived exists (migration 0014), the service's UPDATE
+// throws at the DB layer — clean 500 the global handler will surface.
+//
+// Mounted at /api/admin/library/procedures via routes/library.ts under
+// requireAuth + requireAdmin. Wire the ⋯ kebab → Archive → modal confirm
+// calls this.
+export async function archiveProcedureAdmin(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const id = req.params.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    res.status(400).json({
+      error: { code: 'INVALID_INPUT', message: 'Missing procedure id' },
+    });
+    return;
+  }
+  try {
+    const procedure = await proceduresService.archiveProcedure(id);
+    res.status(200).json({ procedure });
   } catch (err) {
     if (!handleServiceError(err, res)) throw err;
   }

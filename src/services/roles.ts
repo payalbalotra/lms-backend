@@ -1,12 +1,20 @@
 import crypto from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/client';
-import {
-  type ClearanceLevel,
-  employees,
-  roles,
-} from '../db/schema';
+import { employees, roles } from '../db/schema';
 import { ServiceError } from './errors';
+
+// Clearance band the role grants. The role table still tracks this for
+// reporting / audit / recipe-confidentiality purposes (PROJECT_OVERVIEW
+// §03); the previous `employees.clearance_level` column was dropped in
+// migration 0015 because admin authority is just role-membership.
+export const clearanceLevels = [
+  'general',
+  'station',
+  'confidential',
+  'master',
+] as const;
+export type ClearanceLevel = (typeof clearanceLevels)[number];
 
 export interface PublicRole {
   id: string;

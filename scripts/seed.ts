@@ -112,16 +112,16 @@ async function ensureMasterEmployee(): Promise<string> {
     return existing.id;
   }
 
-  // Pre-check: refuse if any other master exists in this location.
+  // Pre-check: refuse if any other role-master exists in this location.
   const [otherMaster] = await db
     .select({ id: employees.id })
     .from(employees)
-    .where(eq(employees.clearanceLevel, 'master'))
+    .where(eq(employees.roleId, 'role-master'))
     .limit(1);
 
   if (otherMaster) {
     console.warn(
-      `master employee: skipped — another master (${otherMaster.id}) already exists. ` +
+      `master employee: skipped — another role-master (${otherMaster.id}) already exists. ` +
         `Remove it or use pnpm admin bootstrap to add another.`,
     );
     return otherMaster.id;
@@ -135,7 +135,6 @@ async function ensureMasterEmployee(): Promise<string> {
     name,
     locationId: LOCATION_ID,
     roleId: 'role-master',
-    clearanceLevel: 'master',
     languagePref: 'en',
     status: 'pending',
     mustResetPassword: false,

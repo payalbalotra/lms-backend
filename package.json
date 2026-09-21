@@ -13,6 +13,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:test": "tsx scripts/seed-test-users.ts",
     "admin": "tsx src/cli/admin.ts"
   },
   "dependencies": {

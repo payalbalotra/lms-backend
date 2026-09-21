@@ -71,7 +71,6 @@ function publicEmployee(e: Employee) {
     locationId: e.locationId,
     roleId: e.roleId,
     stationId: e.stationId,
-    clearanceLevel: e.clearanceLevel,
     languagePref: e.languagePref,
   };
 }

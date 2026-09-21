@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { Command } from 'commander';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client';
-import { employees, stations, type ClearanceLevel } from '../db/schema';
+import { employees, stations } from '../db/schema';
 import { createInvite } from '../auth/invites';
 import { uniqueEmployeeName } from '../services/employee-name';
 
@@ -11,7 +11,7 @@ import { uniqueEmployeeName } from '../services/employee-name';
 // Almentria Mexicana LMS — admin CLI
 // ============================================================================
 // Two flows:
-//   1. bootstrap — first-time setup. Creates a single master-clearance
+//   1. bootstrap — first-time setup. Creates the first 'role-master'
 //      employee and an invite for them. There is no prior admin to issue
 //      the invite, so the invite's createdBy points at the bootstrapping
 //      employee themselves (self-invite). The operator opens the printed
@@ -22,7 +22,15 @@ import { uniqueEmployeeName } from '../services/employee-name';
 // CLI does NOT set passwords. Passwords are provisioned via the activation
 // flow (POST /api/auth/activate) so we have one canonical password-creation
 // path that uses Better Auth's signUpEmail + scrypt hashing.
+//
+// Admin authority is role-membership in 'role-master'. The previous
+// design used a `clearance_level` column on the employee row; migration
+// 0015 dropped it because every employee already has a role and one of
+// those roles IS the admin role. One source of truth.
 // ============================================================================
+
+// Role id whose members are the LMS admins. Mirrors require-admin.ts.
+const ADMIN_ROLE_ID = 'role-master' as const;
 
 const PUBLIC_WEB_BASE_URL =
   process.env.PUBLIC_WEB_BASE_URL ?? 'http://localhost:3000';
@@ -66,12 +74,12 @@ program
 program
   .command('bootstrap')
   .description(
-    'Create the first master-clearance employee + invite. Refuses to run if a master employee already exists.',
+    "Create the first role-master employee + invite. Refuses to run if a role-master employee already exists.",
   )
   .requiredOption('--token <token>', 'Must match ADMIN_BOOTSTRAP_TOKEN env var')
   .requiredOption('--name <name>', 'Display name (login identifier)')
   .requiredOption('--location <id>', 'Location ID')
-  .requiredOption('--role <id>', 'Role ID (should have clearance_level=master)')
+  .requiredOption('--role <id>', `Role ID (use ${ADMIN_ROLE_ID} for the first admin)`)
   .option('--language <en|es>', 'Language preference', 'en')
   .action(async (opts) => {
     requireBootstrapToken(opts.token);
@@ -79,12 +87,12 @@ program
     const existing = await db
       .select({ id: employees.id })
       .from(employees)
-      .where(eq(employees.clearanceLevel, 'master'))
+      .where(eq(employees.roleId, ADMIN_ROLE_ID))
       .limit(1);
 
     if (existing.length > 0) {
       console.error(
-        'Error: A master employee already exists. Use `add-employee --clearance=master` to add more.',
+        `Error: A ${ADMIN_ROLE_ID} employee already exists. Use 'add-employee --role=${ADMIN_ROLE_ID}' to add more.`,
       );
       process.exit(1);
     }
@@ -98,7 +106,6 @@ program
       name,
       locationId: opts.location,
       roleId: opts.role,
-      clearanceLevel: 'master',
       languagePref,
       status: 'pending',
       mustResetPassword: false,
@@ -122,13 +129,6 @@ program
   });
 
 
-const CLEARANCE_LEVELS: ClearanceLevel[] = [
-  'general',
-  'station',
-  'confidential',
-  'master',
-];
-
 program
   .command('add-employee')
   .description(
@@ -137,20 +137,11 @@ program
   .requiredOption('--token <token>', 'Must match ADMIN_BOOTSTRAP_TOKEN env var')
   .requiredOption('--name <name>', 'Display name (login identifier)')
   .requiredOption('--location <id>', 'Location ID')
-  .requiredOption('--role <id>', 'Role ID')
+  .requiredOption('--role <id>', `Role ID (use ${ADMIN_ROLE_ID} for admins)`)
   .option('--station <id>', 'Station ID (optional)')
-  .option('--clearance <level>', 'general|station|confidential|master', 'general')
   .option('--language <en|es>', 'Language preference', 'en')
   .action(async (opts) => {
     requireBootstrapToken(opts.token);
-
-    const clearance = opts.clearance as ClearanceLevel;
-    if (!CLEARANCE_LEVELS.includes(clearance)) {
-      console.error(
-        `Error: --clearance must be one of: ${CLEARANCE_LEVELS.join('|')}`,
-      );
-      process.exit(1);
-    }
 
     const languagePref = opts.language === 'es' ? 'es' : 'en';
 
@@ -163,7 +154,6 @@ program
       locationId: opts.location,
       roleId: opts.role,
       stationId: opts.station ?? null,
-      clearanceLevel: clearance,
       languagePref,
       status: 'pending',
       mustResetPassword: false,

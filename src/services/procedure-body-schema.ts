@@ -174,18 +174,33 @@ export type ProcedureBody = z.infer<typeof procedureBodySchema>;
 export const quizModes = ['training', 'always'] as const;
 export type QuizMode = (typeof quizModes)[number];
 
-// Access selection — each list holds dimension ids (locations, roles,
-// stations, employees) that gate who can read this procedure. A cook
-// sees the procedure when ANY of the lists match their profile:
-//   - their locationId is in `locations`
-//   - OR their roleId     is in `roles`
-//   - OR their stationId  is in `stations`
-//   - OR their own id     is in `employees`.
-// When ALL four lists are empty the procedure is open to everyone at the
-// location (the manager's "Everyone" choice on the Access step). All
-// lists default to [] for backwards compat with older wizard submissions
-// — those procedures are open-to-everyone until the manager re-edits.
-const uuidArray = z.array(z.string().uuid()).default([]);
+// Access selection — each is a single nullable FK to a dimension id
+// (location, role, station, employee). A cook sees the procedure when
+// ANY of the four matches their profile:
+//   - their locationId === accessLocationId, OR
+//   - their roleId     === accessRoleId,     OR
+//   - their stationId  === accessStationId,  OR
+//   - their own id     === accessEmployeeId.
+// When ALL four are null the procedure is open to everyone at the
+// location (the manager's "Everyone" choice on the Access step).
+//
+// Per the 0015 simplification: a procedure has AT MOST ONE assignment
+// per dimension. Multi-assignment per dimension was deliberately dropped
+// as an over-normalisation — the manager picks the most specific match
+// they want (e.g. "just station hot-line", not "all stations at this
+// location AND hot-line"). Revisit if multi-assignment comes back.
+//
+// We don't enforce UUID here — categories are real UUIDs but roles /
+// stations / locations / employees use stable seed ids ('role-general',
+// 'stn-hot-line', 'emp-cook-test'). The service layer does the existence
+// check, so a typo surfaces as 400 *_NOT_FOUND rather than as a 422 from
+// Zod.
+export const accessRef = z
+  .string()
+  .min(1)
+  .max(64)
+  .nullable()
+  .optional();
 
 export const createProcedureInputSchema = z.object({
   titleEn: z.string().min(1).max(200),
@@ -212,10 +227,23 @@ export const createProcedureInputSchema = z.object({
   // the cook-side procedure reader, not only inside training. Ignored when
   // quizId is null (nothing to surface anywhere).
   quizMode: z.enum(quizModes).optional(),
-  // Access lists (F2.6). Empty arrays = open to everyone.
-  locations: uuidArray.optional(),
-  roles: uuidArray.optional(),
-  stations: uuidArray.optional(),
-  employees: uuidArray.optional(),
+  // Access FKs (0015). Null = unrestricted on that dimension.
+  accessLocationId: accessRef,
+  accessRoleId: accessRef,
+  accessStationId: accessRef,
+  accessEmployeeId: accessRef,
 });
 export type CreateProcedureInput = z.infer<typeof createProcedureInputSchema>;
+
+// Patch schema — every field optional, but at least one must be set. Used
+// by PATCH /api/admin/library/procedures/:id (slice D). Fields present in
+// the patch overwrite the existing value; omitted fields are left alone.
+// Slug is NOT patchable — keeping the URL handle stable across edits.
+// Defaults (e.g. status='draft') don't carry across `.partial()` — a patch
+// with just `{titleEn: 'new'}` leaves status untouched.
+export const updateProcedureInputSchema = createProcedureInputSchema
+  .partial()
+  .refine((p) => Object.keys(p).length > 0, {
+    message: 'Patch must include at least one field',
+  });
+export type UpdateProcedureInput = z.infer<typeof updateProcedureInputSchema>;

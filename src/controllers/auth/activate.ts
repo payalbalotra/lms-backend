@@ -266,7 +266,6 @@ export async function activate(req: Request, res: Response): Promise<void> {
       locationId: employee.locationId,
       roleId: employee.roleId,
       stationId: employee.stationId,
-      clearanceLevel: employee.clearanceLevel,
       languagePref: employee.languagePref,
     },
   });

@@ -1,19 +1,14 @@
 import crypto from 'node:crypto';
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
   categories,
   employees,
   locations,
-  procedureEmployees,
-  procedureLocations,
-  procedureRoles,
-  procedureStations,
   procedures,
   quizzes,
   roles,
   stations,
-  type Procedure,
   type ProcedureStatus,
 } from '../db/schema';
 import { ServiceError } from './errors';
@@ -24,6 +19,7 @@ import {
   type CreateProcedureInput,
   type ProcedureBody,
   type QuizMode,
+  type UpdateProcedureInput,
 } from './procedure-body-schema';
 import {
   publicCategory,
@@ -37,6 +33,13 @@ import {
 // category_id is null) or when the category was archived after this
 // procedure was created (FK SET NULL). quizId + linkedTrainingId +
 // quizMode are the F2.5 wiring for training-course + quiz attachment.
+//
+// `access` carries the per-dimension FK id (added in migration 0015) so
+// the manager can see who a SOP is restricted to; cook-side readers get
+// the same shape and can ignore it. ALL FOUR fields null = open to
+// everyone at the location (the manager's "Everyone" choice on the
+// Access step). One FK set per dimension max — multi-assignment per
+// dimension was the deliberate simplification in 0015.
 export interface PublicProcedure {
   id: string;
   slug: string;
@@ -54,7 +57,36 @@ export interface PublicProcedure {
   quizId: string | null;
   linkedTrainingId: string | null;
   quizMode: QuizMode;
+  /** Monotonic publish version. Bumped server-side on every publish
+   *  transition inside a SELECT FOR UPDATE so concurrent publishes
+   *  serialize and don't both write N+1. Starts at 1. The QR code on
+   *  the printed SOP links back to procedures.slug?version=N so the
+   *  manager can hand out a stable code that always points at the
+   *  current version. Added by migration 0014. */
+  version: number;
+  /** Soft-archive flag. Per PROJECT_OVERVIEW §02: content moves through
+   *  draft → published → archived. Archived procedures stay visible in
+   *  the admin library under an opt-in filter chip; the cook-side reader
+   *  filters them out. Added by migration 0014. */
+  isArchived: boolean;
+  access: ProcedureAccess;
 }
+
+export interface ProcedureAccess {
+  locationId: string | null;
+  roleId: string | null;
+  stationId: string | null;
+  employeeId: string | null;
+}
+
+// Used by callers that haven't (or don't need to) load the procedure row
+// for its access columns — createProcedure passes the FKs it just wrote.
+export const EMPTY_ACCESS: ProcedureAccess = {
+  locationId: null,
+  roleId: null,
+  stationId: null,
+  employeeId: null,
+};
 
 /** Parse stored JSON bodies back to the API shape. Fall back to an empty
  *  block list when the stored data doesn't validate — a single malformed row
@@ -119,7 +151,8 @@ function looksLikeLegacyBody(raw: unknown): boolean {
 }
 
 // Drizzle's leftJoin selects return one row per procedure with the joined
-// category (or null). publicProcedure takes that row shape directly.
+// category (or null). publicProcedure reads the access FKs off the row
+// directly (migration 0015 put them on procedures) — no second fetch.
 export function publicProcedure(
   row: Readonly<typeof procedures.$inferSelect> & {
     category: typeof categories.$inferSelect | null;
@@ -145,6 +178,19 @@ export function publicProcedure(
     // Schema default is 'training' — but treat any unknown value (legacy row,
     // hand-edited DB) as 'training' so the wire shape stays typed.
     quizMode: p.quizMode === 'always' ? 'always' : 'training',
+    // Migration 0014 columns: surfaced on every read so admin surfaces can
+    // render the v{n} chip + archived filter without a second fetch.
+    version: p.version,
+    isArchived: p.isArchived,
+    // Migration 0015 access FKs: one nullable id per dimension. ALL null =
+    // open to everyone at the manager's "Everyone" choice on the Access
+    // step. Otherwise the cook must match at least one of the four.
+    access: {
+      locationId: p.accessLocationId,
+      roleId: p.accessRoleId,
+      stationId: p.accessStationId,
+      employeeId: p.accessEmployeeId,
+    },
   };
 }
 
@@ -261,30 +307,27 @@ export async function createProcedure(
   }
   const finalQuizMode = quizId === null ? 'training' : quizMode;
 
-  // F2.6: validate the access selection lists before the insert. Each
-  // list is deduped (manager may have double-clicked a chip) and checked
-  // for existence against the dimension table. Locations are additionally
-  // constrained to the procedure's location — managers can't pick a
-  // location the procedure doesn't belong to (the procedure is implicitly
-  // anchored to the actor's location; categories are the only piece that
-  // can move it).
-  const locationsList = dedupe(input.locations ?? []);
-  const rolesList = dedupe(input.roles ?? []);
-  const stationsList = dedupe(input.stations ?? []);
-  const employeesList = dedupe(input.employees ?? []);
-
-  await assertAccessIdsExist({
-    locationsList,
-    rolesList,
-    stationsList,
-    employeesList,
-  });
+  // F2.6: validate the access FKs before the insert. Each is a single
+  // nullable id — checked for existence against its dimension table so a
+  // typo surfaces as 400 *_NOT_FOUND instead of a 23503 violation on the
+  // FK (which would surface as a 500). When all four are null the
+  // procedure is open to everyone (the manager's "Everyone" choice).
+  const access = {
+    locationId: input.accessLocationId ?? null,
+    roleId: input.accessRoleId ?? null,
+    stationId: input.accessStationId ?? null,
+    employeeId: input.accessEmployeeId ?? null,
+  };
+  await assertAccessIdsExist(access);
 
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
 
-  // Wrap the procedure insert + the four junction inserts in one tx so a
-  // FK violation on a junction row doesn't leave the procedure half-set.
+  // Single insert — the access FKs live on procedures themselves (0015),
+  // no junction rows to follow up with. The transaction wrapper stays
+  // for parity with updateProcedure; it's a no-op overhead but keeps
+  // the shape uniform and lets future writes (e.g. an audit row) ride
+  // along.
   await db.transaction(async (tx) => {
     await tx.insert(procedures).values({
       id,
@@ -301,28 +344,11 @@ export async function createProcedure(
       quizId,
       linkedTrainingId: input.linkedTrainingId ?? null,
       quizMode: finalQuizMode,
+      accessLocationId: access.locationId,
+      accessRoleId: access.roleId,
+      accessStationId: access.stationId,
+      accessEmployeeId: access.employeeId,
     });
-
-    if (locationsList.length > 0) {
-      await tx.insert(procedureLocations).values(
-        locationsList.map((locationId) => ({ procedureId: id, locationId })),
-      );
-    }
-    if (rolesList.length > 0) {
-      await tx.insert(procedureRoles).values(
-        rolesList.map((roleId) => ({ procedureId: id, roleId })),
-      );
-    }
-    if (stationsList.length > 0) {
-      await tx.insert(procedureStations).values(
-        stationsList.map((stationId) => ({ procedureId: id, stationId })),
-      );
-    }
-    if (employeesList.length > 0) {
-      await tx.insert(procedureEmployees).values(
-        employeesList.map((employeeId) => ({ procedureId: id, employeeId })),
-      );
-    }
   });
 
   const [row] = await db
@@ -343,71 +369,273 @@ export async function createProcedure(
   });
 }
 
-// De-dupe the access lists so the manager can double-click a chip without
-// tripping the composite PK or doubling the junction rows. Preserves
-// order (does not sort) so the wizard's display order stays predictable.
-function dedupe(ids: string[]): string[] {
-  return Array.from(new Set(ids));
+// Update an existing procedure. Partial — every field optional, but at
+// least one must be set (enforced by the Zod patch schema before this
+// runs). The slug is intentionally NOT patchable: keeping the URL handle
+// stable across edits preserves any QR codes already printed.
+//
+// Cross-field rules mirror createProcedure — recipe ingredients must
+// align with factors, every critical step must declare a critical limit,
+// and an attached quiz must exist (404 QUIZ_NOT_FOUND if not). Access
+// updates replace existing FK values per dimension; passing an explicit
+// null in a patch is the way to drop the chip on that dimension.
+//
+// Body updates are validated through the same Zod schema as creation,
+// then the recipe / critical-limit cross-field checks run on the parsed
+// blocks. The parsed result is what we write back — no re-parse.
+//
+// On transitions to status='published' from any other status, we bump
+// procedures.version inside a SELECT FOR UPDATE so concurrent publishes
+// serialize and don't both write N+1. The QR code on the printed SOP
+// links to procedures.slug?version=N — the bump is the signal that the
+// printed copy is stale.
+export async function updateProcedure(
+  id: string,
+  patch: UpdateProcedureInput,
+): Promise<PublicProcedure> {
+  // 1. Parse body updates up front + run cross-field checks on the parsed
+  //    blocks. Storing the parsed result avoids a second parse when we
+  //    write back.
+  let parsedBodyEn: ProcedureBody | undefined;
+  let parsedBodyEs: ProcedureBody | undefined;
+  if (patch.bodyEn !== undefined) {
+    parsedBodyEn = procedureBodySchema.parse(patch.bodyEn);
+    assertRecipeIngredientsAlign(parsedBodyEn.blocks, 'en');
+    assertCriticalStepsHaveLimits(parsedBodyEn.blocks, 'en');
+  }
+  if (patch.bodyEs !== undefined) {
+    parsedBodyEs = procedureBodySchema.parse(patch.bodyEs);
+    assertRecipeIngredientsAlign(parsedBodyEs.blocks, 'es');
+    assertCriticalStepsHaveLimits(parsedBodyEs.blocks, 'es');
+  }
+
+  // 2. Load the current row. We need it for cross-references that combine
+  //    patch with current state (effective quiz id, current status for the
+  //    publish-bump decision, current version for the bump itself).
+  const [current] = await db
+    .select({ proc: procedures, category: categories })
+    .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+  if (!current) {
+    throw new ServiceError(404, 'PROCEDURE_NOT_FOUND', 'Procedure not found');
+  }
+
+  // 3. Validate category if patched. SET NULL FK would silently accept a
+  //    bogus id — we want a clean 404 / 400 instead.
+  if (patch.categoryId !== undefined && patch.categoryId !== null) {
+    const [cat] = await db
+      .select({ id: categories.id, isArchived: categories.isArchived })
+      .from(categories)
+      .where(eq(categories.id, patch.categoryId))
+      .limit(1);
+    if (!cat) {
+      throw new ServiceError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
+    }
+    if (cat.isArchived) {
+      throw new ServiceError(
+        400,
+        'CATEGORY_ARCHIVED',
+        'Cannot assign an archived category to a procedure',
+      );
+    }
+  }
+
+  // 4. Validate quiz if patched to a non-null id. Same SET NULL rationale.
+  if (patch.quizId !== undefined && patch.quizId !== null) {
+    const [quiz] = await db
+      .select({ id: quizzes.id })
+      .from(quizzes)
+      .where(eq(quizzes.id, patch.quizId))
+      .limit(1);
+    if (!quiz) {
+      throw new ServiceError(404, 'QUIZ_NOT_FOUND', 'Quiz not found');
+    }
+  }
+
+  // 5. Resolve effective quizId + quizMode. Patch wins; otherwise fall
+  //    back to the current row. 'always' with no quiz is downgraded
+  //    silently (logged at info) — same rule as createProcedure.
+  const effectiveQuizId =
+    patch.quizId !== undefined ? patch.quizId : current.proc.quizId;
+  let effectiveQuizMode: QuizMode;
+  if (patch.quizMode !== undefined) {
+    if (effectiveQuizId === null && patch.quizMode === 'always') {
+      logger.info(
+        `procedure update: quizMode 'always' ignored because no quiz is attached`,
+      );
+      effectiveQuizMode = 'training';
+    } else {
+      effectiveQuizMode = patch.quizMode;
+    }
+  } else {
+    effectiveQuizMode = current.proc.quizMode === 'always' ? 'always' : 'training';
+  }
+
+  // 6. Validate access FKs if any dimension is patched. A patch sets the
+  //    column to its new value verbatim (null included) — there's no
+  //    "leave alone" semantic; the manager only touches the field when
+  //    they want to change it.
+  if (
+    patch.accessLocationId !== undefined ||
+    patch.accessRoleId !== undefined ||
+    patch.accessStationId !== undefined ||
+    patch.accessEmployeeId !== undefined
+  ) {
+    await assertAccessIdsExist({
+      locationId: patch.accessLocationId ?? null,
+      roleId: patch.accessRoleId ?? null,
+      stationId: patch.accessStationId ?? null,
+      employeeId: patch.accessEmployeeId ?? null,
+    });
+  }
+
+  // 7. Build the procedure patch — only fields present in the input are
+  //    written. updatedAt is always stamped. The publish-transition
+  //    bump is computed inside the transaction (step 8) so the version
+  //    read is FOR-UPDATE-consistent.
+  const procPatch: Partial<typeof procedures.$inferInsert> = {
+    updatedAt: new Date(),
+  };
+  if (patch.titleEn !== undefined) procPatch.titleEn = patch.titleEn;
+  if (patch.titleEs !== undefined) procPatch.titleEs = patch.titleEs;
+  if (patch.purposeEn !== undefined) procPatch.purposeEn = patch.purposeEn;
+  if (patch.purposeEs !== undefined) procPatch.purposeEs = patch.purposeEs;
+  if (patch.categoryId !== undefined) procPatch.categoryId = patch.categoryId;
+  if (patch.status !== undefined) {
+    procPatch.status = patch.status;
+  }
+  if (parsedBodyEn !== undefined) procPatch.blocksEn = parsedBodyEn;
+  if (parsedBodyEs !== undefined) procPatch.blocksEs = parsedBodyEs;
+  if (patch.quizId !== undefined) procPatch.quizId = patch.quizId;
+  if (patch.linkedTrainingId !== undefined) {
+    procPatch.linkedTrainingId = patch.linkedTrainingId;
+  }
+  // Stamp quizMode if it changed. Without this, a patch that only sets
+  // quizId=null with quizMode='training' (the default) would persist
+  // 'always' on the row even though the manager picked 'training'.
+  const currentQuizMode: QuizMode =
+    current.proc.quizMode === 'always' ? 'always' : 'training';
+  if (effectiveQuizMode !== currentQuizMode) {
+    procPatch.quizMode = effectiveQuizMode;
+  }
+  // Access FKs land in the same UPDATE (0015 — no junction rows).
+  if (patch.accessLocationId !== undefined) {
+    procPatch.accessLocationId = patch.accessLocationId ?? null;
+  }
+  if (patch.accessRoleId !== undefined) {
+    procPatch.accessRoleId = patch.accessRoleId ?? null;
+  }
+  if (patch.accessStationId !== undefined) {
+    procPatch.accessStationId = patch.accessStationId ?? null;
+  }
+  if (patch.accessEmployeeId !== undefined) {
+    procPatch.accessEmployeeId = patch.accessEmployeeId ?? null;
+  }
+
+  // 8. Atomic write — single UPDATE on procedures. The publish-bump
+  //    runs the same SELECT FOR UPDATE inside the transaction so two
+  //    concurrent publishes serialize and don't both write N+1.
+  await db.transaction(async (tx) => {
+    if (
+      patch.status === 'published' &&
+      current.proc.status !== 'published'
+    ) {
+      const [row] = await tx
+        .select({ version: procedures.version })
+        .from(procedures)
+        .where(eq(procedures.id, id))
+        .for('update')
+        .limit(1);
+      if (row) {
+        procPatch.version = row.version + 1;
+      }
+    }
+    await tx.update(procedures).set(procPatch).where(eq(procedures.id, id));
+  });
+
+  // 9. Re-fetch the row and return the public shape. Access FKs come
+  //    straight off the row — no separate junction fetch.
+  const [updated] = await db
+    .select({ proc: procedures, category: categories })
+    .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+  if (!updated) {
+    throw new ServiceError(500, 'INTERNAL_ERROR', 'Updated procedure not found');
+  }
+  return publicProcedure({ ...updated.proc, category: updated.category });
 }
 
-// Verify every id in every access list exists in its dimension table.
-// One round-trip per dimension (4 SELECTs in the worst case). The
-// alternative is one big UNION, but that costs us the per-list error
-// code — we'd lose the ability to say "this location id doesn't exist"
-// vs "this role id doesn't exist". Each list short-circuits when empty.
+// Verify each access FK resolves to a real row in its dimension table.
+// One SELECT per dimension — only the dimensions the manager actually
+// set (or is patching to) cost a query. A typo surfaces as 400
+// *_NOT_FOUND rather than as a 23503 violation that would surface as a
+// generic 500.
 async function assertAccessIdsExist(opts: {
-  locationsList: string[];
-  rolesList: string[];
-  stationsList: string[];
-  employeesList: string[];
+  locationId: string | null;
+  roleId: string | null;
+  stationId: string | null;
+  employeeId: string | null;
 }): Promise<void> {
-  if (opts.locationsList.length > 0) {
-    const found = await db
+  if (opts.locationId !== null) {
+    const [row] = await db
       .select({ id: locations.id })
       .from(locations)
-      .where(inArray(locations.id, opts.locationsList));
-    if (found.length !== opts.locationsList.length) {
-      throw new ServiceError(400, 'LOCATION_NOT_FOUND', 'Unknown location in access list');
+      .where(eq(locations.id, opts.locationId))
+      .limit(1);
+    if (!row) {
+      throw new ServiceError(400, 'LOCATION_NOT_FOUND', 'Unknown location id');
     }
   }
-  if (opts.rolesList.length > 0) {
-    const found = await db
+  if (opts.roleId !== null) {
+    const [row] = await db
       .select({ id: roles.id })
       .from(roles)
-      .where(inArray(roles.id, opts.rolesList));
-    if (found.length !== opts.rolesList.length) {
-      throw new ServiceError(400, 'ROLE_NOT_FOUND', 'Unknown role in access list');
+      .where(eq(roles.id, opts.roleId))
+      .limit(1);
+    if (!row) {
+      throw new ServiceError(400, 'ROLE_NOT_FOUND', 'Unknown role id');
     }
   }
-  if (opts.stationsList.length > 0) {
-    const found = await db
+  if (opts.stationId !== null) {
+    const [row] = await db
       .select({ id: stations.id })
       .from(stations)
-      .where(inArray(stations.id, opts.stationsList));
-    if (found.length !== opts.stationsList.length) {
-      throw new ServiceError(400, 'STATION_NOT_FOUND', 'Unknown station in access list');
+      .where(eq(stations.id, opts.stationId))
+      .limit(1);
+    if (!row) {
+      throw new ServiceError(400, 'STATION_NOT_FOUND', 'Unknown station id');
     }
   }
-  if (opts.employeesList.length > 0) {
-    const found = await db
+  if (opts.employeeId !== null) {
+    const [row] = await db
       .select({ id: employees.id })
       .from(employees)
-      .where(inArray(employees.id, opts.employeesList));
-    if (found.length !== opts.employeesList.length) {
-      throw new ServiceError(400, 'EMPLOYEE_NOT_FOUND', 'Unknown employee in access list');
+      .where(eq(employees.id, opts.employeeId))
+      .limit(1);
+    if (!row) {
+      throw new ServiceError(400, 'EMPLOYEE_NOT_FOUND', 'Unknown employee id');
     }
   }
 }
 
 /** Admin-only list of procedures. Newest first. Optionally filtered by status
- *  (`'draft' | 'published'`). Returns the full public shape so the editor can
- *  re-open a draft without a second fetch. */
+ *  (`'draft' | 'published'`) or by archived flag (default = include
+ *  everything; admin library uses `includeArchived=false` to hide archived
+ *  rows behind the opt-in filter chip). Returns the full public shape so
+ *  the editor can re-open a draft without a second fetch. */
 export async function listProcedures(
-  filter: { status?: ProcedureStatus } = {},
+  filter: { status?: ProcedureStatus; includeArchived?: boolean } = {},
 ): Promise<PublicProcedure[]> {
   const conditions = [];
   if (filter.status) {
     conditions.push(eq(procedures.status, filter.status));
+  }
+  if (filter.includeArchived === false) {
+    conditions.push(eq(procedures.isArchived, false));
   }
   const rows = await db
     .select({ proc: procedures, category: categories })
@@ -415,9 +643,7 @@ export async function listProcedures(
     .leftJoin(categories, eq(categories.id, procedures.categoryId))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(procedures.updatedAt));
-  return rows.map((row) =>
-    publicProcedure({ ...row.proc, category: row.category }),
-  );
+  return rows.map((row) => publicProcedure({ ...row.proc, category: row.category }));
 }
 
 /** Fetch a single procedure by slug (used by the public doc view). Returns
@@ -437,6 +663,62 @@ export async function getProcedureBySlug(
   return publicProcedure({ ...row.proc, category: row.category });
 }
 
+// Soft-archive a procedure. Idempotent — calling twice has the same
+// effect (the row is already archived). Unarchive is a separate action:
+// PATCH /api/admin/library/procedures/:id with `{ isArchived: false }`,
+// handled by the slice-D update path. Splitting archive and unarchive
+// matches the categories endpoint shape and avoids the ambiguity of a
+// toggle that the manager might fire by accident.
+// Idempotent toggle. The route is a single POST /archive with no body —
+// each call flips the row. The SELECT ... FOR UPDATE inside the
+// transaction serialises concurrent toggles so two simultaneous archive
+// calls can't both flip in the same direction (one would no-op, but the
+// version audit log would still see exactly one transition).
+export async function archiveProcedure(
+  id: string,
+): Promise<PublicProcedure> {
+  let nextArchived = false;
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ isArchived: procedures.isArchived })
+      .from(procedures)
+      .where(eq(procedures.id, id))
+      .for('update')
+      .limit(1);
+    if (!row) {
+      throw new ServiceError(404, 'PROCEDURE_NOT_FOUND', 'Procedure not found');
+    }
+    nextArchived = !row.isArchived;
+    await tx
+      .update(procedures)
+      .set({ isArchived: nextArchived, updatedAt: new Date() })
+      .where(eq(procedures.id, id));
+  });
+  const procedure = await getProcedureById(id);
+  if (!procedure) {
+    throw new ServiceError(500, 'INTERNAL_ERROR', 'Archived procedure not found');
+  }
+  return procedure;
+}
+
+/** Admin read by id (not slug). Used by the read-only summary route at
+ *  /admin/library/[id] so the manager can deep-link to a procedure via its
+ *  stable UUID instead of the mutable slug. Returns `null` for unknown id —
+ *  the controller maps to 404. Unlike getProcedureBySlug this is admin-only:
+ *  the cook-side reader uses the slug-based path with the access join. */
+export async function getProcedureById(
+  id: string,
+): Promise<PublicProcedure | null> {
+  const [row] = await db
+    .select({ proc: procedures, category: categories })
+    .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+  if (!row) return null;
+  return publicProcedure({ ...row.proc, category: row.category });
+}
+
 // Shape we need from the cookie session to evaluate "can this cook read
 // this procedure?". `stationId` is nullable (a cook may have no station).
 // `id` and `locationId` are always present.
@@ -448,28 +730,21 @@ export interface EmployeeAccessProfile {
 }
 
 /** Cook-side list. Returns every published, non-archived procedure that
- *  the caller can read — either because it's open to all employees at
- *  the location (no rows in any of the four junction tables) or because
- *  the cook's (locationId, roleId, stationId, id) hits at least one
- *  junction row for the procedure.
+ *  the caller can read.
  *
- *  Built as one SQL round-trip with four correlated EXISTS subqueries
- *  OR'd together plus an "all four are empty" branch. Each EXISTS is
- *  backed by the composite PK on its junction table — `(procedure_id,
- *  <dim>_id)` is the index, so the planner can seek directly.
+ *  Access rule (post-0015): a cook sees the procedure when ANY of the
+ *  four access_*_id columns matches their profile, OR the procedure is
+ *  open to everyone (all four FKs null). isArchived=false is layered
+ *  on top so the cook reader hides archived SOPs automatically.
+ *
+ *  One SQL round-trip — no junction EXISTS subqueries, no per-row
+ *  access fetch. Each per-dimension match is backed by the b-tree
+ *  index on its access_*_id column (created in 0015).
  *
  *  Newest first so the cook dashboard shows freshly-updated SOPs at the
  *  top. No pagination in this slice — small library, dozens not
  *  thousands of procedures per location. Add LIMIT/OFFSET or cursor
- *  pagination when the count passes ~200.
- *
- *  NOTE: is_archived filter intentionally absent — procedures.is_archived
- *  doesn't exist yet (stage 2 plan adds it as migration 0014). When the
- *  column lands, add `coalesce(${procedures.isArchived}, false) = false`
- *  to the WHERE and bump the SQL once. Until then, archived procedures
- *  still surface — the manager hasn't been able to archive anything yet
- *  so this is a no-op in practice.
- */
+ *  pagination when the count passes ~200. */
 export async function listProceduresForEmployee(
   me: EmployeeAccessProfile,
 ): Promise<PublicProcedure[]> {
@@ -480,22 +755,8 @@ export async function listProceduresForEmployee(
     .where(
       and(
         eq(procedures.status, 'published'),
-        or(
-          // Open to all: zero rows across every junction table for this SOP.
-          and(
-            sql`not exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id})`,
-          ),
-          // OR the cook's profile hits at least one junction row.
-          sql`exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id} and pl.location_id = ${me.locationId})`,
-          sql`exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id} and pr.role_id = ${me.roleId})`,
-          me.stationId !== null
-            ? sql`exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id} and ps.station_id = ${me.stationId})`
-            : sql`false`,
-          sql`exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id} and pe.employee_id = ${me.id})`,
-        ),
+        eq(procedures.isArchived, false),
+        cookAccessMatches(me),
       ),
     )
     .orderBy(desc(procedures.updatedAt));
@@ -504,14 +765,13 @@ export async function listProceduresForEmployee(
 
 /** Single-procedure cook-side read. Returns `null` when the slug doesn't
  *  match OR when the cook isn't allowed to read the procedure (status
- *  filter + access join both evaluated). Callers map null to 404 — we
- *  don't distinguish "wrong slug" from "no access" on the wire, since
- *  leaking that distinction would help an attacker enumerate slugs.
+ *  filter + access match + archived filter all evaluated). Callers map
+ *  null to 404 — we don't distinguish "wrong slug" from "no access" on
+ *  the wire, since leaking that distinction would help an attacker
+ *  enumerate slugs.
  *
- *  Implementation: same SQL as listProceduresForEmployee, narrowed by
- *  slug. One round-trip.
- *
- *  is_archived comment from listProceduresForEmployee applies here too. */
+ *  Implementation: same WHERE shape as listProceduresForEmployee,
+ *  narrowed by slug. One round-trip. */
 export async function getProcedureForEmployee(
   slug: string,
   me: EmployeeAccessProfile,
@@ -524,25 +784,41 @@ export async function getProcedureForEmployee(
       and(
         eq(procedures.slug, slug),
         eq(procedures.status, 'published'),
-        or(
-          and(
-            sql`not exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id})`,
-            sql`not exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id})`,
-          ),
-          sql`exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id} and pl.location_id = ${me.locationId})`,
-          sql`exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id} and pr.role_id = ${me.roleId})`,
-          me.stationId !== null
-            ? sql`exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id} and ps.station_id = ${me.stationId})`
-            : sql`false`,
-          sql`exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id} and pe.employee_id = ${me.id})`,
-        ),
+        eq(procedures.isArchived, false),
+        cookAccessMatches(me),
       ),
     )
     .limit(1);
   if (!row) return null;
   return publicProcedure({ ...row.proc, category: row.category });
+}
+
+// Cook-side access predicate. A procedure matches the cook when ANY of:
+//   - accessLocationId = me.locationId (manager targeted this location)
+//   - accessRoleId     = me.roleId     (manager targeted this role)
+//   - accessStationId  = me.stationId  (manager targeted this station)
+//   - accessEmployeeId = me.id         (manager targeted this person)
+//   - OR all four FKs are null (manager picked "Everyone").
+//
+// The station match has a NULL guard: if the cook has no station, the
+// station clause is dropped to NULL = NULL being false in SQL — we
+// don't want a NULL-meets-NULL match accidentally granting access.
+function cookAccessMatches(me: EmployeeAccessProfile) {
+  return or(
+    // Open to all: every FK null.
+    and(
+      sql`${procedures.accessLocationId} IS NULL`,
+      sql`${procedures.accessRoleId} IS NULL`,
+      sql`${procedures.accessStationId} IS NULL`,
+      sql`${procedures.accessEmployeeId} IS NULL`,
+    ),
+    eq(procedures.accessLocationId, me.locationId),
+    eq(procedures.accessRoleId, me.roleId),
+    me.stationId !== null
+      ? eq(procedures.accessStationId, me.stationId)
+      : sql`false`,
+    eq(procedures.accessEmployeeId, me.id),
+  );
 }
 
 function assertRecipeIngredientsAlign(blocks: Block[], lang: 'en' | 'es'): void {
