@@ -23,18 +23,35 @@ function invalidInput(
   });
 }
 
-function unauthenticated(res: Response): void {
-  res.status(401).json({
-    error: { code: 'UNAUTHENTICATED', message: 'Not authenticated' },
-  });
+// requireAuth + requireAdmin always run before these handlers and populate
+// req.employee. The runtime null check would never fire — we just read
+// `req.employee.id` directly. If middleware is ever loosened to mount one of
+// these handlers without requireAdmin, the first `req.employee.id` access
+// will throw and the global error handler returns 500 — preferable to a
+// silent 401 that masks the misconfiguration.
+function actorId(req: Request): string {
+  if (!req.employee) {
+    throw new Error('actorId called without req.employee — middleware misconfigured');
+  }
+  return req.employee.id;
 }
 
 // ---------- POST /api/admin/library/procedures ------------------------------
 //
-// Body: { titleEn, titleEs, purposeEn, purposeEs, categoryKey, status, bodyEn, bodyEs }
+// Body: { titleEn, titleEs, purposeEn, purposeEs, categoryId, status, bodyEn,
+// bodyEs, quizId?, linkedTrainingId?, quizMode? }.
 // `status` is 'draft' or 'published'. Both `bodyEn` and `bodyEs` are full
 // Procedure bodies (the shape defined in services/procedure-body-schema.ts) —
 // same shape, two languages. Both must validate; we never fall back.
+//
+// F2.5 wiring (all optional):
+//   - quizId: FK to the centralised quizzes row; service verifies it
+//     exists (404 QUIZ_NOT_FOUND). Default null.
+//   - linkedTrainingId: free-form string for now (training_courses table
+//     doesn't exist yet in stage 2). Default null = standalone SOP.
+//   - quizMode: 'training' (default) = quiz only inside the linked course.
+//               'always' = quiz also surfaces on the cook-side reader.
+//               Downgraded to 'training' silently when quizId is null.
 //
 // Mounted at /api/admin/library/procedures via routes/library.ts. The
 // requireAuth + requireAdmin middleware populates req.employee before this
@@ -43,11 +60,6 @@ export async function createProcedure(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
-
   const parsed = createProcedureInputSchema.safeParse(req.body);
   if (!parsed.success) {
     invalidInput(res, parsed.error.issues);
@@ -56,7 +68,7 @@ export async function createProcedure(
 
   try {
     const procedure = await proceduresService.createProcedure(parsed.data, {
-      employeeId: req.employee.id,
+      employeeId: actorId(req),
     });
     res.status(201).json({ procedure });
   } catch (err) {
@@ -73,11 +85,6 @@ export async function listProcedures(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
-
   const raw = req.query.status;
   let status: ProcedureStatus | undefined;
   if (typeof raw === 'string' && raw.length > 0) {
@@ -136,11 +143,6 @@ export async function importProcedure(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
-
   const parsed = importInputSchema.safeParse(req.body);
   if (!parsed.success) {
     invalidInput(res, parsed.error.issues);
@@ -167,10 +169,6 @@ export async function getProcedure(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const slug = req.params.slug;
   if (typeof slug !== 'string' || slug.length === 0) {
     res.status(400).json({
@@ -221,10 +219,6 @@ export async function listCategoriesAdmin(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : '';
   if (locationId.length === 0) {
     res.status(400).json({
@@ -253,10 +247,6 @@ export async function createCategoryAdmin(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const parsed = categoryCreateSchema.safeParse(req.body);
   if (!parsed.success) {
     invalidInput(res, parsed.error.issues);
@@ -264,7 +254,7 @@ export async function createCategoryAdmin(
   }
   try {
     const cat = await categoriesService.createCategory(parsed.data, {
-      employeeId: req.employee.id,
+      employeeId: actorId(req),
     });
     res.status(201).json({ category: cat });
   } catch (err) {
@@ -280,10 +270,6 @@ export async function updateCategoryAdmin(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const id = req.params.id;
   if (typeof id !== 'string' || id.length === 0) {
     res.status(400).json({
@@ -311,10 +297,6 @@ export async function archiveCategoryAdmin(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const id = req.params.id;
   if (typeof id !== 'string' || id.length === 0) {
     res.status(400).json({
@@ -342,10 +324,6 @@ export async function listCategoriesPublic(
   req: Request,
   res: Response,
 ): Promise<void> {
-  if (!req.employee) {
-    unauthenticated(res);
-    return;
-  }
   const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : '';
   if (locationId.length === 0) {
     res.status(400).json({

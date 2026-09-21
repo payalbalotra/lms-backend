@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db/client';
-import { categories, procedures, type Procedure, type ProcedureStatus } from '../db/schema';
+import {
+  categories,
+  procedures,
+  quizzes,
+  type Procedure,
+  type ProcedureStatus,
+} from '../db/schema';
 import { ServiceError } from './errors';
 import { logger } from '../lib/logger.js';
 import {
@@ -9,6 +15,7 @@ import {
   type Block,
   type CreateProcedureInput,
   type ProcedureBody,
+  type QuizMode,
 } from './procedure-body-schema';
 import {
   publicCategory,
@@ -20,7 +27,8 @@ import {
 // frontend can render without a second JSON.parse. category is the joined
 // Category row — null when the procedure has no category (the row's
 // category_id is null) or when the category was archived after this
-// procedure was created (FK SET NULL).
+// procedure was created (FK SET NULL). quizId + linkedTrainingId +
+// quizMode are the F2.5 wiring for training-course + quiz attachment.
 export interface PublicProcedure {
   id: string;
   slug: string;
@@ -35,6 +43,9 @@ export interface PublicProcedure {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  quizId: string | null;
+  linkedTrainingId: string | null;
+  quizMode: QuizMode;
 }
 
 /** Parse stored JSON bodies back to the API shape. Fall back to an empty
@@ -121,6 +132,11 @@ export function publicProcedure(
     createdBy: p.createdBy,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
+    quizId: p.quizId,
+    linkedTrainingId: p.linkedTrainingId,
+    // Schema default is 'training' — but treat any unknown value (legacy row,
+    // hand-edited DB) as 'training' so the wire shape stays typed.
+    quizMode: p.quizMode === 'always' ? 'always' : 'training',
   };
 }
 
@@ -207,6 +223,36 @@ export async function createProcedure(
     }
   }
 
+  // F2.5 wiring: validate the quiz reference. FK SET NULL would silently
+  // accept an unknown id — we want a clean 404 instead. Stage 3 training
+  // courses don't exist as a table yet, so linkedTrainingId is plain text
+  // (no FK, no existence check).
+  const quizId = input.quizId ?? null;
+  if (quizId !== null) {
+    const [quiz] = await db
+      .select({ id: quizzes.id })
+      .from(quizzes)
+      .where(eq(quizzes.id, quizId))
+      .limit(1);
+    if (!quiz) {
+      throw new ServiceError(404, 'QUIZ_NOT_FOUND', 'Quiz not found');
+    }
+  }
+
+  // Default quizMode to 'training' when no quiz is attached (the field is
+  // a no-op without a quiz, but we still store it so later re-attaching
+  // doesn't require a second write).
+  const quizMode = input.quizMode ?? 'training';
+  if (quizId === null && quizMode === 'always') {
+    // 'always' only matters when there IS a quiz. Don't reject — just
+    // downgrade silently so the wizard can leave the radio in its last
+    // position without blocking the save.
+    logger.info(
+      `procedure create: quizMode 'always' ignored because no quiz is attached`,
+    );
+  }
+  const finalQuizMode = quizId === null ? 'training' : quizMode;
+
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
 
@@ -222,6 +268,9 @@ export async function createProcedure(
     blocksEn: bodyEn,
     blocksEs: bodyEs,
     createdBy: actor.employeeId,
+    quizId,
+    linkedTrainingId: input.linkedTrainingId ?? null,
+    quizMode: finalQuizMode,
   });
 
   const [row] = await db

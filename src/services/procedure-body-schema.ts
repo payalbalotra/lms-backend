@@ -171,6 +171,9 @@ export const procedureBodySchema = z.object({
 });
 export type ProcedureBody = z.infer<typeof procedureBodySchema>;
 
+export const quizModes = ['training', 'always'] as const;
+export type QuizMode = (typeof quizModes)[number];
+
 export const createProcedureInputSchema = z.object({
   titleEn: z.string().min(1).max(200),
   titleEs: z.string().min(1).max(200),
@@ -183,5 +186,18 @@ export const createProcedureInputSchema = z.object({
   status: z.enum(['draft', 'published']).default('draft'),
   bodyEn: procedureBodySchema,
   bodyEs: procedureBodySchema,
+  // FK to the centralised quizzes row. Nullable — an SOP without a quiz
+  // is the default. When set, the quiz must exist; the FK has SET NULL
+  // semantics so a deleted quiz clears the reference silently.
+  quizId: z.string().uuid().nullable().optional(),
+  // FK by id to a training course (stage 3 surface). No DB FK here yet —
+  // the training_courses table doesn't exist yet. Plain string for now.
+  // Null means the SOP stands alone (not attached to a course).
+  linkedTrainingId: z.string().min(1).nullable().optional(),
+  // Per-SOP quiz visibility choice. 'training' = quiz only surfaces inside
+  // the linked training course (default). 'always' = quiz also surfaces on
+  // the cook-side procedure reader, not only inside training. Ignored when
+  // quizId is null (nothing to surface anywhere).
+  quizMode: z.enum(quizModes).optional(),
 });
 export type CreateProcedureInput = z.infer<typeof createProcedureInputSchema>;
