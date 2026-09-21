@@ -7,6 +7,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { sql as drizzleSql } from 'drizzle-orm';
 export * from './auth-schema';
@@ -211,6 +212,91 @@ export const procedures = pgTable(
 );
 
 // ============================================================================
+// Library: procedure access (junction tables)
+//
+// A published procedure is visible to a cook when ANY of these is true:
+//   - the cook's locationId is in procedure_locations for the SOP, OR
+//   - the cook's roleId     is in procedure_roles     for the SOP, OR
+//   - the cook's stationId  is in procedure_stations  for the SOP, OR
+//   - the cook's own id     is in procedure_employees for the SOP.
+// A procedure with zero rows across all four junction tables is open to
+// every active employee at the location (the manager's "Everyone" choice
+// on the Access step). Cook-read queries always layer
+// status='published' AND is_archived=false on top of this OR join.
+//
+// Each junction table pairs the procedure with one dimension id; the
+// composite PK prevents duplicate assignments, and the reverse index
+// makes "which procedures does this employee/role/station/location see"
+// a single index lookup. CASCADE on every FK keeps the junction rows
+// in sync when a procedure is deleted (admin-side) or when an employee
+// is deactivated (employee-side).
+// ============================================================================
+
+export const procedureLocations = pgTable(
+  'procedure_locations',
+  {
+    procedureId: text('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    locationId: text('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'cascade' }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.procedureId, t.locationId] }),
+    byLocation: index('procedure_locations_location_idx').on(t.locationId),
+  }),
+);
+
+export const procedureRoles = pgTable(
+  'procedure_roles',
+  {
+    procedureId: text('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    roleId: text('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.procedureId, t.roleId] }),
+    byRole: index('procedure_roles_role_idx').on(t.roleId),
+  }),
+);
+
+export const procedureStations = pgTable(
+  'procedure_stations',
+  {
+    procedureId: text('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    stationId: text('station_id')
+      .notNull()
+      .references(() => stations.id, { onDelete: 'cascade' }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.procedureId, t.stationId] }),
+    byStation: index('procedure_stations_station_idx').on(t.stationId),
+  }),
+);
+
+export const procedureEmployees = pgTable(
+  'procedure_employees',
+  {
+    procedureId: text('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.procedureId, t.employeeId] }),
+    byEmployee: index('procedure_employees_employee_idx').on(t.employeeId),
+  }),
+);
+
+// ============================================================================
 // Library: quizzes (centralised quiz table)
 // One row per quiz. Authored from procedure wizard (stage 2) or training-course
 // wizard (stage 3). The procedure's `quizId` FK points here.
@@ -277,6 +363,14 @@ export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
 export type Procedure = typeof procedures.$inferSelect;
 export type NewProcedure = typeof procedures.$inferInsert;
+export type ProcedureLocation = typeof procedureLocations.$inferSelect;
+export type NewProcedureLocation = typeof procedureLocations.$inferInsert;
+export type ProcedureRole = typeof procedureRoles.$inferSelect;
+export type NewProcedureRole = typeof procedureRoles.$inferInsert;
+export type ProcedureStation = typeof procedureStations.$inferSelect;
+export type NewProcedureStation = typeof procedureStations.$inferInsert;
+export type ProcedureEmployee = typeof procedureEmployees.$inferSelect;
+export type NewProcedureEmployee = typeof procedureEmployees.$inferInsert;
 export type Quiz = typeof quizzes.$inferSelect;
 export type NewQuiz = typeof quizzes.$inferInsert;
 export type QuizAttempt = typeof quizAttempts.$inferSelect;

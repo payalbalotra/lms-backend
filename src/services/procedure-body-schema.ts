@@ -174,6 +174,19 @@ export type ProcedureBody = z.infer<typeof procedureBodySchema>;
 export const quizModes = ['training', 'always'] as const;
 export type QuizMode = (typeof quizModes)[number];
 
+// Access selection — each list holds dimension ids (locations, roles,
+// stations, employees) that gate who can read this procedure. A cook
+// sees the procedure when ANY of the lists match their profile:
+//   - their locationId is in `locations`
+//   - OR their roleId     is in `roles`
+//   - OR their stationId  is in `stations`
+//   - OR their own id     is in `employees`.
+// When ALL four lists are empty the procedure is open to everyone at the
+// location (the manager's "Everyone" choice on the Access step). All
+// lists default to [] for backwards compat with older wizard submissions
+// — those procedures are open-to-everyone until the manager re-edits.
+const uuidArray = z.array(z.string().uuid()).default([]);
+
 export const createProcedureInputSchema = z.object({
   titleEn: z.string().min(1).max(200),
   titleEs: z.string().min(1).max(200),
@@ -199,5 +212,10 @@ export const createProcedureInputSchema = z.object({
   // the cook-side procedure reader, not only inside training. Ignored when
   // quizId is null (nothing to surface anywhere).
   quizMode: z.enum(quizModes).optional(),
+  // Access lists (F2.6). Empty arrays = open to everyone.
+  locations: uuidArray.optional(),
+  roles: uuidArray.optional(),
+  stations: uuidArray.optional(),
+  employees: uuidArray.optional(),
 });
 export type CreateProcedureInput = z.infer<typeof createProcedureInputSchema>;

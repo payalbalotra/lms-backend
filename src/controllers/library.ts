@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { createProcedureInputSchema } from '../services/procedure-body-schema';
 import * as proceduresService from '../services/procedures';
+import type { EmployeeAccessProfile } from '../services/procedures';
 import * as categoriesService from '../services/categories';
 import { extractProcedureFromDocument } from '../services/document-extract';
 import { handleServiceError } from '../lib/handle-service-error';
@@ -176,8 +177,17 @@ export async function getProcedure(
     });
     return;
   }
+  // Cook-side read — gate the row against the caller's (locationId, roleId,
+  // stationId, id). null = 404 with no distinction between "wrong slug"
+  // and "no access" (avoids leaking which slugs exist).
+  const profile: EmployeeAccessProfile = {
+    id: actorId(req),
+    locationId: req.employee!.locationId,
+    roleId: req.employee!.roleId,
+    stationId: req.employee!.stationId ?? null,
+  };
   try {
-    const procedure = await proceduresService.getProcedureBySlug(slug);
+    const procedure = await proceduresService.getProcedureForEmployee(slug, profile);
     if (!procedure) {
       res.status(404).json({
         error: { code: 'NOT_FOUND', message: 'Procedure not found' },
@@ -185,6 +195,33 @@ export async function getProcedure(
       return;
     }
     res.status(200).json({ procedure });
+  } catch (err) {
+    if (!handleServiceError(err, res)) throw err;
+  }
+}
+
+// ===========================================================================
+// Cook-side list — any logged-in employee (admin OR cook) can list the
+// procedures they're allowed to read. Same access join as the single-SOP
+// route, just without the slug filter. Newest-first.
+// ===========================================================================
+//
+// Mounted at /api/procedures via routes/procedures.ts (requireAuth only —
+// no requireAdmin). Mount BEFORE /:slug in the router or Express will
+// route GET /procedures into the slug handler.
+export async function listProceduresForEmployee(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const profile: EmployeeAccessProfile = {
+    id: actorId(req),
+    locationId: req.employee!.locationId,
+    roleId: req.employee!.roleId,
+    stationId: req.employee!.stationId ?? null,
+  };
+  try {
+    const procedures = await proceduresService.listProceduresForEmployee(profile);
+    res.status(200).json({ procedures });
   } catch (err) {
     if (!handleServiceError(err, res)) throw err;
   }

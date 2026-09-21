@@ -1,10 +1,18 @@
 import crypto from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
   categories,
+  employees,
+  locations,
+  procedureEmployees,
+  procedureLocations,
+  procedureRoles,
+  procedureStations,
   procedures,
   quizzes,
+  roles,
+  stations,
   type Procedure,
   type ProcedureStatus,
 } from '../db/schema';
@@ -253,24 +261,68 @@ export async function createProcedure(
   }
   const finalQuizMode = quizId === null ? 'training' : quizMode;
 
+  // F2.6: validate the access selection lists before the insert. Each
+  // list is deduped (manager may have double-clicked a chip) and checked
+  // for existence against the dimension table. Locations are additionally
+  // constrained to the procedure's location — managers can't pick a
+  // location the procedure doesn't belong to (the procedure is implicitly
+  // anchored to the actor's location; categories are the only piece that
+  // can move it).
+  const locationsList = dedupe(input.locations ?? []);
+  const rolesList = dedupe(input.roles ?? []);
+  const stationsList = dedupe(input.stations ?? []);
+  const employeesList = dedupe(input.employees ?? []);
+
+  await assertAccessIdsExist({
+    locationsList,
+    rolesList,
+    stationsList,
+    employeesList,
+  });
+
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
 
-  await db.insert(procedures).values({
-    id,
-    slug,
-    titleEn: input.titleEn,
-    titleEs: input.titleEs,
-    purposeEn: input.purposeEn,
-    purposeEs: input.purposeEs,
-    categoryId: input.categoryId,
-    status: input.status,
-    blocksEn: bodyEn,
-    blocksEs: bodyEs,
-    createdBy: actor.employeeId,
-    quizId,
-    linkedTrainingId: input.linkedTrainingId ?? null,
-    quizMode: finalQuizMode,
+  // Wrap the procedure insert + the four junction inserts in one tx so a
+  // FK violation on a junction row doesn't leave the procedure half-set.
+  await db.transaction(async (tx) => {
+    await tx.insert(procedures).values({
+      id,
+      slug,
+      titleEn: input.titleEn,
+      titleEs: input.titleEs,
+      purposeEn: input.purposeEn,
+      purposeEs: input.purposeEs,
+      categoryId: input.categoryId,
+      status: input.status,
+      blocksEn: bodyEn,
+      blocksEs: bodyEs,
+      createdBy: actor.employeeId,
+      quizId,
+      linkedTrainingId: input.linkedTrainingId ?? null,
+      quizMode: finalQuizMode,
+    });
+
+    if (locationsList.length > 0) {
+      await tx.insert(procedureLocations).values(
+        locationsList.map((locationId) => ({ procedureId: id, locationId })),
+      );
+    }
+    if (rolesList.length > 0) {
+      await tx.insert(procedureRoles).values(
+        rolesList.map((roleId) => ({ procedureId: id, roleId })),
+      );
+    }
+    if (stationsList.length > 0) {
+      await tx.insert(procedureStations).values(
+        stationsList.map((stationId) => ({ procedureId: id, stationId })),
+      );
+    }
+    if (employeesList.length > 0) {
+      await tx.insert(procedureEmployees).values(
+        employeesList.map((employeeId) => ({ procedureId: id, employeeId })),
+      );
+    }
   });
 
   const [row] = await db
@@ -289,6 +341,62 @@ export async function createProcedure(
     ...row.proc,
     category: row.category,
   });
+}
+
+// De-dupe the access lists so the manager can double-click a chip without
+// tripping the composite PK or doubling the junction rows. Preserves
+// order (does not sort) so the wizard's display order stays predictable.
+function dedupe(ids: string[]): string[] {
+  return Array.from(new Set(ids));
+}
+
+// Verify every id in every access list exists in its dimension table.
+// One round-trip per dimension (4 SELECTs in the worst case). The
+// alternative is one big UNION, but that costs us the per-list error
+// code — we'd lose the ability to say "this location id doesn't exist"
+// vs "this role id doesn't exist". Each list short-circuits when empty.
+async function assertAccessIdsExist(opts: {
+  locationsList: string[];
+  rolesList: string[];
+  stationsList: string[];
+  employeesList: string[];
+}): Promise<void> {
+  if (opts.locationsList.length > 0) {
+    const found = await db
+      .select({ id: locations.id })
+      .from(locations)
+      .where(inArray(locations.id, opts.locationsList));
+    if (found.length !== opts.locationsList.length) {
+      throw new ServiceError(400, 'LOCATION_NOT_FOUND', 'Unknown location in access list');
+    }
+  }
+  if (opts.rolesList.length > 0) {
+    const found = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(inArray(roles.id, opts.rolesList));
+    if (found.length !== opts.rolesList.length) {
+      throw new ServiceError(400, 'ROLE_NOT_FOUND', 'Unknown role in access list');
+    }
+  }
+  if (opts.stationsList.length > 0) {
+    const found = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(inArray(stations.id, opts.stationsList));
+    if (found.length !== opts.stationsList.length) {
+      throw new ServiceError(400, 'STATION_NOT_FOUND', 'Unknown station in access list');
+    }
+  }
+  if (opts.employeesList.length > 0) {
+    const found = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(inArray(employees.id, opts.employeesList));
+    if (found.length !== opts.employeesList.length) {
+      throw new ServiceError(400, 'EMPLOYEE_NOT_FOUND', 'Unknown employee in access list');
+    }
+  }
 }
 
 /** Admin-only list of procedures. Newest first. Optionally filtered by status
@@ -324,6 +432,114 @@ export async function getProcedureBySlug(
     .from(procedures)
     .leftJoin(categories, eq(categories.id, procedures.categoryId))
     .where(eq(procedures.slug, slug))
+    .limit(1);
+  if (!row) return null;
+  return publicProcedure({ ...row.proc, category: row.category });
+}
+
+// Shape we need from the cookie session to evaluate "can this cook read
+// this procedure?". `stationId` is nullable (a cook may have no station).
+// `id` and `locationId` are always present.
+export interface EmployeeAccessProfile {
+  id: string;
+  locationId: string;
+  roleId: string;
+  stationId: string | null;
+}
+
+/** Cook-side list. Returns every published, non-archived procedure that
+ *  the caller can read — either because it's open to all employees at
+ *  the location (no rows in any of the four junction tables) or because
+ *  the cook's (locationId, roleId, stationId, id) hits at least one
+ *  junction row for the procedure.
+ *
+ *  Built as one SQL round-trip with four correlated EXISTS subqueries
+ *  OR'd together plus an "all four are empty" branch. Each EXISTS is
+ *  backed by the composite PK on its junction table — `(procedure_id,
+ *  <dim>_id)` is the index, so the planner can seek directly.
+ *
+ *  Newest first so the cook dashboard shows freshly-updated SOPs at the
+ *  top. No pagination in this slice — small library, dozens not
+ *  thousands of procedures per location. Add LIMIT/OFFSET or cursor
+ *  pagination when the count passes ~200.
+ *
+ *  NOTE: is_archived filter intentionally absent — procedures.is_archived
+ *  doesn't exist yet (stage 2 plan adds it as migration 0014). When the
+ *  column lands, add `coalesce(${procedures.isArchived}, false) = false`
+ *  to the WHERE and bump the SQL once. Until then, archived procedures
+ *  still surface — the manager hasn't been able to archive anything yet
+ *  so this is a no-op in practice.
+ */
+export async function listProceduresForEmployee(
+  me: EmployeeAccessProfile,
+): Promise<PublicProcedure[]> {
+  const rows = await db
+    .select({ proc: procedures, category: categories })
+    .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(
+      and(
+        eq(procedures.status, 'published'),
+        or(
+          // Open to all: zero rows across every junction table for this SOP.
+          and(
+            sql`not exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id})`,
+          ),
+          // OR the cook's profile hits at least one junction row.
+          sql`exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id} and pl.location_id = ${me.locationId})`,
+          sql`exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id} and pr.role_id = ${me.roleId})`,
+          me.stationId !== null
+            ? sql`exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id} and ps.station_id = ${me.stationId})`
+            : sql`false`,
+          sql`exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id} and pe.employee_id = ${me.id})`,
+        ),
+      ),
+    )
+    .orderBy(desc(procedures.updatedAt));
+  return rows.map((row) => publicProcedure({ ...row.proc, category: row.category }));
+}
+
+/** Single-procedure cook-side read. Returns `null` when the slug doesn't
+ *  match OR when the cook isn't allowed to read the procedure (status
+ *  filter + access join both evaluated). Callers map null to 404 — we
+ *  don't distinguish "wrong slug" from "no access" on the wire, since
+ *  leaking that distinction would help an attacker enumerate slugs.
+ *
+ *  Implementation: same SQL as listProceduresForEmployee, narrowed by
+ *  slug. One round-trip.
+ *
+ *  is_archived comment from listProceduresForEmployee applies here too. */
+export async function getProcedureForEmployee(
+  slug: string,
+  me: EmployeeAccessProfile,
+): Promise<PublicProcedure | null> {
+  const [row] = await db
+    .select({ proc: procedures, category: categories })
+    .from(procedures)
+    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .where(
+      and(
+        eq(procedures.slug, slug),
+        eq(procedures.status, 'published'),
+        or(
+          and(
+            sql`not exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id})`,
+            sql`not exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id})`,
+          ),
+          sql`exists (select 1 from procedure_locations pl where pl.procedure_id = ${procedures.id} and pl.location_id = ${me.locationId})`,
+          sql`exists (select 1 from procedure_roles pr where pr.procedure_id = ${procedures.id} and pr.role_id = ${me.roleId})`,
+          me.stationId !== null
+            ? sql`exists (select 1 from procedure_stations ps where ps.procedure_id = ${procedures.id} and ps.station_id = ${me.stationId})`
+            : sql`false`,
+          sql`exists (select 1 from procedure_employees pe where pe.procedure_id = ${procedures.id} and pe.employee_id = ${me.id})`,
+        ),
+      ),
+    )
     .limit(1);
   if (!row) return null;
   return publicProcedure({ ...row.proc, category: row.category });
