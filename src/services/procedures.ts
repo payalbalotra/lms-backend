@@ -39,14 +39,29 @@ export interface PublicProcedure {
 
 /** Parse stored JSON bodies back to the API shape. Fall back to an empty
  *  block list when the stored data doesn't validate — a single malformed row
- *  shouldn't 400 the whole list endpoint. Bad shape is logged with the row id
- *  and the first Zod issue so the offending record can be repaired. */
+ *  shouldn't 400 the whole list endpoint.
+ *
+ *  Three branches, in order:
+ *    1. New shape (`{ blocks: [...] }`) — accepted silently.
+ *    2. Legacy shape (object with pre-migration section keys, no `blocks`)
+ *       — logged at `info`, not `warn`: these rows predate the schema
+ *       change and are expected for any procedure written before the
+ *       blocks-array migration. Empty body is served until the rows are
+ *       converted in place by a follow-up data migration.
+ *    3. Anything else — true corruption, logged at `warn` with the row id
+ *       and the first Zod issue so the offending record can be repaired. */
 export function parseStoredBody(
   raw: unknown,
   where: string,
 ): ProcedureBody {
   const parsed = procedureBodySchema.safeParse(raw);
   if (parsed.success) return parsed.data;
+
+  if (looksLikeLegacyBody(raw)) {
+    logger.info(`procedure body legacy shape (${where})`);
+    return { blocks: [] };
+  }
+
   const first = parsed.error.issues[0];
   const shape =
     raw === null
@@ -60,6 +75,28 @@ export function parseStoredBody(
     `procedure body invalid (${where}): ${first?.path?.join('.') ?? '?'} - ${first?.message ?? 'invalid'} -> ${shape}`,
   );
   return { blocks: [] };
+}
+
+// Section keys that defined the pre-migration body shape. Any one of
+// these — without a `blocks` key — is enough to identify the row as
+// legacy. A full set guards against accidental matches on single-key
+// arbitrary objects.
+const LEGACY_BODY_SECTION_KEYS = [
+  'facts',
+  'method',
+  'attachments',
+  'related',
+  'control',
+] as const;
+
+// Recognise the legacy body shape: a plain object, no `blocks` key, with
+// at least one of the documented legacy section keys. Anything else
+// falls through to the warn branch above.
+function looksLikeLegacyBody(raw: unknown): boolean {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const o = raw as Record<string, unknown>;
+  if ('blocks' in o) return false;
+  return LEGACY_BODY_SECTION_KEYS.some((k) => k in o);
 }
 
 // Drizzle's leftJoin selects return one row per procedure with the joined

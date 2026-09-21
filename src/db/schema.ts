@@ -197,11 +197,68 @@ export const procedures = pgTable(
       .references(() => employees.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    // Quiz + training wiring (added 0013).
+    quizId: text('quiz_id').references(() => quizzes.id, { onDelete: 'set null' }),
+    linkedTrainingId: text('linked_training_id'), // no FK — stage 3
+    quizMode: text('quiz_mode').notNull().default('training'),
   },
   (t) => ({
     slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
     byCategory: index('procedures_category_idx').on(t.categoryId),
     byStatus: index('procedures_status_idx').on(t.status),
+    byQuiz: index('procedures_quiz_id_idx').on(t.quizId),
+  }),
+);
+
+// ============================================================================
+// Library: quizzes (centralised quiz table)
+// One row per quiz. Authored from procedure wizard (stage 2) or training-course
+// wizard (stage 3). The procedure's `quizId` FK points here.
+// ============================================================================
+
+export const quizzes = pgTable(
+  'quizzes',
+  {
+    id: text('id').primaryKey(),
+    questions: jsonb('questions').notNull().default([]),
+    attached: boolean('attached').notNull().default(false),
+    // null = no passing threshold enforced.
+    passingScore: integer('passing_score'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
+// ============================================================================
+// Library: quiz_attempts (one row per submission)
+// Multiple attempts per (quiz, employee) allowed (retakes).
+// `score` is percent 0..100; `passed` is denormalised against the quiz's
+// `passingScore` at submit time so reads don't re-evaluate.
+// `answers` is a jsonb map of {questionId: choiceId} for the audit trail.
+// ============================================================================
+
+export const quizAttempts = pgTable(
+  'quiz_attempts',
+  {
+    id: text('id').primaryKey(),
+    quizId: text('quiz_id')
+      .notNull()
+      .references(() => quizzes.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    score: integer('score').notNull(),
+    passed: boolean('passed').notNull(),
+    answers: jsonb('answers').notNull().default({}),
+    attemptedAt: timestamp('attempted_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    quizEmployeeIdx: index('quiz_attempts_quiz_employee_idx').on(
+      t.quizId,
+      t.employeeId,
+      t.attemptedAt,
+    ),
+    employeeIdx: index('quiz_attempts_employee_idx').on(t.employeeId, t.attemptedAt),
   }),
 );
 
@@ -220,3 +277,7 @@ export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
 export type Procedure = typeof procedures.$inferSelect;
 export type NewProcedure = typeof procedures.$inferInsert;
+export type Quiz = typeof quizzes.$inferSelect;
+export type NewQuiz = typeof quizzes.$inferInsert;
+export type QuizAttempt = typeof quizAttempts.$inferSelect;
+export type NewQuizAttempt = typeof quizAttempts.$inferInsert;
