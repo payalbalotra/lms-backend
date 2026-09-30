@@ -78,6 +78,55 @@
       "when": 1789561389005,
       "tag": "0011_clumsy_sphinx",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790588362941,
+      "tag": "0012_add_jobs_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790588736363,
+      "tag": "0013_drop_clearance_level_from_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790589164520,
+      "tag": "0014_change_ids_to_uuid",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790589277821,
+      "tag": "0015_fix_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790592642762,
+      "tag": "0016_military_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790593205179,
+      "tag": "0017_moaning_ego",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790593364838,
+      "tag": "0018_typical_bill_hollister",
+      "breakpoints": true
     }
   ]
 }

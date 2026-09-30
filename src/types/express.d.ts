@@ -1,5 +1,3 @@
-
-
 import 'express';
 import type { Logger } from 'pino';
 
@@ -13,8 +11,7 @@ export interface AuthedEmployee {
   name: string;
   locationId: string;
   roleId: string;
-  stationId: string | null;
-  clearanceLevel: 'general' | 'station' | 'confidential' | 'master';
+  email: string | null;
   languagePref: 'en' | 'es';
   status: 'pending' | 'active' | 'deactivated';
 }
@@ -24,12 +21,17 @@ declare global {
     interface Request {
       id?: string;
       log?: Logger;
+      isSuperAdmin?: boolean;
       /**
        * Populated by `requireAuth` with `{ id, locationId, roleId }` so any
        * controller behind any auth-only mount can read basic identity. Routes
        * that mount `requireAdmin` get the full AuthedEmployee attached too.
        */
-      employee?: Partial<AuthedEmployee> & { id: string; locationId: string; roleId: string };
+      employee?: Partial<AuthedEmployee> & {
+        id: string;
+        locationId: string;
+        roleId: string;
+      };
     }
   }
 }
