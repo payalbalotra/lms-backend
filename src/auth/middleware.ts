@@ -1,8 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
-import { eq } from 'drizzle-orm';
-import { db } from '../db/client';
-import { employees } from '../db/schema';
-import { auth } from './better-auth';
+import { fromNodeHeaders } from 'better-auth/node';
+import { eq, and, gt } from 'drizzle-orm';
+import { db } from '../db/client.ts';
+import { employees } from '../db/schema.ts';
+import { session as sessionTable } from '../db/schema.ts';
+import { auth } from './betterauth.ts';
 
 /**
  * Request shape after `requireAuth` succeeds. `requireAdmin` consumes
@@ -21,43 +23,73 @@ export interface AuthedRequest extends Request {
 }
 
 /**
- * Validates the Better Auth session cookie and resolves it to an LMS employee.
- * Attaches a minimal session payload to `req.session` and the device mode.
- * Does NOT populate `req.employee` — that is `requireAdmin`'s job.
+ * Validates the Bearer token (Authorization header) or session cookie and
+ * resolves it to an LMS employee. Attaches a minimal session payload to
+ * `req.session` and the device mode.
  */
 export async function requireAuth(
   req: AuthedRequest,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  // 1. Ask Better Auth if the request carries a valid session cookie.
-  //    getSession is DB-backed (or reads from the in-memory cookieCache when
-  //    enabled in better-auth.ts). Returns null when there is no cookie,
-  //    the cookie is invalid, or the session is expired/revoked.
-  //
-  //    Express's `req.headers` is an `IncomingHttpHeaders` object whose values
-  //    are `string | string[] | undefined`. Better Auth expects the Web Fetch
-  //    `Headers` shape, so we convert.
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue;
-    headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
-  }
-  const session = await auth.api.getSession({ headers });
+  let userId: string | null = null;
+  let sessionId: string | null = null;
 
-  if (!session) {
+  const authHeader = req.headers['authorization'] ?? '';
+  const bearerToken = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : null;
+
+  console.log(
+    `[Auth Debug] Checking Bearer token: ${bearerToken?.substring(0, 10)}...`,
+  );
+
+  if (bearerToken) {
+    const [row] = await db
+      .select({ userId: sessionTable.userId, id: sessionTable.id })
+      .from(sessionTable)
+      .where(
+        and(
+          eq(sessionTable.token, bearerToken),
+          gt(sessionTable.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+
+    if (row) {
+      console.log(
+        `[Auth Debug] Found session row in DB! userId: ${row.userId}`,
+      );
+      userId = row.userId;
+      sessionId = row.id;
+    } else {
+      console.log(`[Auth Debug] Token NOT found in DB, or expired.`);
+    }
+  }
+
+  // 2. Fall back to cookie-based session (browser clients).
+  if (!userId) {
+    const cookieSession = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (cookieSession) {
+      console.log(`[Auth Debug] Found session via better-auth getSession`);
+      userId = cookieSession.user.id;
+      sessionId = cookieSession.session.id;
+    } else {
+      console.log(`[Auth Debug] better-auth getSession also returned null.`);
+    }
+  }
+
+  if (!userId || !sessionId) {
+    console.log(`[Auth Debug] Rejecting request: userId or sessionId is null.`);
     res.status(401).json({
       error: { code: 'SESSION_INVALID', message: 'Session expired or invalid' },
     });
     return;
   }
 
-  // 2. Resolve the Better Auth user to an LMS employee. The user↔employee
-  //    link is the `employees.userId` FK; employees are 1:1 with users.
-  //    We load the columns every controller downstream needs (id, locationId,
-  //    roleId) so non-admin routes that only mount requireAuth still see a
-  //    populated `req.employee`. requireAdmin re-loads the full row and
-  //    overwrites this when it runs.
+  // 3. Resolve user to an LMS employee.
   const [employee] = await db
     .select({
       id: employees.id,
@@ -66,21 +98,39 @@ export async function requireAuth(
       roleId: employees.roleId,
     })
     .from(employees)
-    .where(eq(employees.userId, session.user.id))
+    .where(eq(employees.userId, userId))
     .limit(1);
 
-  if (!employee || employee.status !== 'active') {
-    // User has a valid Better Auth session but no active employee row
-    // (deactivated, deleted, never activated). Treat as no session.
+  if (!employee) {
+    console.log(
+      `[Auth Debug] No employee record found. Bypassing as Super Admin.`,
+    );
+    // Super admins have no employee record. Bypass employee checks downstream.
+    req.session = {
+      id: sessionId,
+      employeeId: 'super-admin', // dummy ID to satisfy types
+    };
+    req.isSuperAdmin = true;
+    req.employee = {
+      id: userId,
+      locationId: 'global',
+      roleId: 'super-admin',
+    };
+    req.deviceMode =
+      req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
+    return next();
+  }
+
+  if (employee.status !== 'active') {
     res.status(401).json({
       error: { code: 'SESSION_INVALID', message: 'Session expired or invalid' },
     });
     return;
   }
 
-  // 3. Attach to the request. Same shape requireAdmin already consumes.
+  // 4. Attach to the request.
   req.session = {
-    id: session.session.id,
+    id: sessionId,
     employeeId: employee.id,
   };
   req.employee = {

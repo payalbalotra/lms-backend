@@ -1,9 +1,14 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
-import { db } from '../db/client';
-import { employees, invites, type Invite, type Employee } from '../db/schema';
-import { generateActivationCode } from './code';
+import { and, eq, isNull } from 'drizzle-orm';
+import { db } from '../db/client.ts';
+import {
+  employees,
+  invites,
+  type Invite,
+  type Employee,
+} from '../db/schema.ts';
+import { generateActivationCode } from './generatecode.ts';
 
 // The 5-digit activation code is a low-entropy secret (10^5 ≈ 17 bits).
 // Rate-limiting at the route layer is the primary defense — bcrypt just
@@ -45,6 +50,8 @@ export async function createInvite(input: {
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + ttlMs);
 
+  // Cancel ALL prior invites for this employee — including expired ones —
+  // so there is never more than one active invite row per employee at a time.
   await db
     .update(invites)
     .set({ cancelledAt: new Date() })
@@ -53,7 +60,6 @@ export async function createInvite(input: {
         eq(invites.employeeId, input.employeeId),
         isNull(invites.usedAt),
         isNull(invites.cancelledAt),
-        gt(invites.expiresAt, sql`now()`),
       ),
     );
 
@@ -121,7 +127,9 @@ export interface InviteLookup {
   employeeStatus: 'pending' | 'active' | 'deactivated';
 }
 
-export async function lookupInvite(token: string): Promise<
+export async function lookupInvite(
+  token: string,
+): Promise<
   | { ok: true; lookup: InviteLookup }
   | { ok: false; reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' | 'CANCELLED' }
 > {
@@ -154,10 +162,7 @@ export async function lookupInvite(token: string): Promise<
 }
 
 // Atomically: set password, flip status to active, mark invite used.
-export async function consumeInvite(
-  token: string,
-  newPasswordHash: string,
-): Promise<Employee> {
+export async function consumeInvite(token: string): Promise<Employee> {
   const tokenHash = hashToken(token);
   const now = new Date();
 
@@ -171,32 +176,29 @@ export async function consumeInvite(
     if (!row) throw new Error('INVITE_NOT_FOUND');
     if (row.cancelledAt) throw new Error('INVITE_CANCELLED');
     if (row.usedAt) throw new Error('INVITE_ALREADY_USED');
-    if (row.expiresAt.getTime() <= Date.now()) throw new Error('INVITE_EXPIRED');
+    if (row.expiresAt.getTime() <= Date.now())
+      throw new Error('INVITE_EXPIRED');
 
     const [updated] = await tx
       .update(employees)
       .set({
-        passwordHash: newPasswordHash,
         status: 'active',
-        mustResetPassword: false,
-        failedLoginAttempts: 0,
-        lockedUntil: null,
       })
       .where(eq(employees.id, row.employeeId))
       .returning();
     if (!updated) throw new Error('EMPLOYEE_NOT_FOUND');
 
-    await tx
-      .update(invites)
-      .set({ usedAt: now })
-      .where(eq(invites.id, row.id));
+    await tx.update(invites).set({ usedAt: now }).where(eq(invites.id, row.id));
 
     return updated;
   });
 }
 
 // Reusable cancel — used by the resend handler.
-export async function cancelOutstandingInvites(employeeId: string): Promise<number> {
+// Cancels ALL pending invites for the employee (expired or not).
+export async function cancelOutstandingInvites(
+  employeeId: string,
+): Promise<number> {
   const result = await db
     .update(invites)
     .set({ cancelledAt: new Date() })
@@ -205,7 +207,6 @@ export async function cancelOutstandingInvites(employeeId: string): Promise<numb
         eq(invites.employeeId, employeeId),
         isNull(invites.usedAt),
         isNull(invites.cancelledAt),
-        gt(invites.expiresAt, sql`now()`),
       ),
     )
     .returning({ id: invites.id });

@@ -20,81 +20,40 @@
 // ============================================================================
 
 import 'dotenv/config';
-import crypto from 'node:crypto';
 import { sql, closeDb } from '../src/db/client.js';
-import { employees } from '../src/db/schema.js';
+import { employees, roles } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db/client.js';
 import { createInvite } from '../src/auth/invites.js';
-import { uniqueEmployeeName } from '../src/services/employee-name.js';
+import { uniqueEmployeeName } from '../src/services/employee/employee.service.ts';
+import { spawnSync } from 'node:child_process';
+import process from 'node:process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PUBLIC_WEB_BASE_URL =
   process.env.PUBLIC_WEB_BASE_URL ?? 'http://localhost:3000';
 
-const LOCATION_ID = 'loc-main';
-const LOCATION_NAME = 'Mexicana Main';
+// We still keep a reference to the main location ID for seeding stations and the master user
+const MAIN_LOCATION_NAME = 'Mexicana Main';
+let mainLocationId = '';
 
-interface RoleFixture {
-  id: string;
-  name: string;
-  clearanceLevel: 'general' | 'station' | 'confidential' | 'master';
+async function fetchMainLocationId(): Promise<void> {
+  const existing =
+    await sql`SELECT id FROM locations WHERE name = ${MAIN_LOCATION_NAME}`;
+  if (existing.length === 0) {
+    throw new Error(
+      `Location '${MAIN_LOCATION_NAME}' not found. Please run seed-locations.ts first.`,
+    );
+  }
+  mainLocationId = existing[0].id;
 }
-
-const ROLES: RoleFixture[] = [
-  { id: 'role-general', name: 'General', clearanceLevel: 'general' },
-  { id: 'role-station', name: 'Station Cook', clearanceLevel: 'station' },
-  { id: 'role-confidential', name: 'Confidential', clearanceLevel: 'confidential' },
-  { id: 'role-master', name: 'Master', clearanceLevel: 'master' },
-];
-
-interface StationFixture {
-  id: string;
-  name: string;
-  sortOrder: number;
-}
-
-const STATIONS: StationFixture[] = [
-  { id: 'stn-hot-line', name: 'Hot line', sortOrder: 10 },
-  { id: 'stn-cold-prep', name: 'Cold prep', sortOrder: 20 },
-  { id: 'stn-tortillas', name: 'Tortilla station', sortOrder: 30 },
-  { id: 'stn-sauces', name: 'Sauces & salsas', sortOrder: 40 },
-  { id: 'stn-beverages', name: 'Beverage bar', sortOrder: 50 },
-  { id: 'stn-dish', name: 'Dish pit', sortOrder: 60 },
-];
 
 const MASTER_NAME = 'admin';
-const MASTER_EMPLOYEE_ID = 'emp-master-seed';
-
-async function ensureLocation(): Promise<void> {
-  await sql`
-    INSERT INTO locations (id, name)
-    VALUES (${LOCATION_ID}, ${LOCATION_NAME})
-    ON CONFLICT (id) DO NOTHING
-  `;
-  console.log(`location: ${LOCATION_ID} (${LOCATION_NAME})`);
-}
-
-async function ensureRoles(): Promise<void> {
-  for (const role of ROLES) {
-    await sql`
-      INSERT INTO roles (id, name, clearance_level)
-      VALUES (${role.id}, ${role.name}, ${role.clearanceLevel})
-      ON CONFLICT (id) DO NOTHING
-    `;
-  }
-  console.log(`roles: ${ROLES.length} (${ROLES.map((r) => r.clearanceLevel).join(', ')})`);
-}
-
-async function ensureStations(): Promise<void> {
-  for (const st of STATIONS) {
-    await sql`
-      INSERT INTO stations (id, name, location_id, sort_order, is_archived)
-      VALUES (${st.id}, ${st.name}, ${LOCATION_ID}, ${st.sortOrder}, false)
-      ON CONFLICT (id) DO NOTHING
-    `;
-  }
-  console.log(`stations: ${STATIONS.length} (under ${LOCATION_ID})`);
-}
+const MASTER_EMPLOYEE_ID = '00000000-0000-0000-0000-000000000000';
 
 async function ensureMasterEmployee(): Promise<string> {
   // Idempotent master — stable id so reseeding doesn't churn.
@@ -112,11 +71,22 @@ async function ensureMasterEmployee(): Promise<string> {
     return existing.id;
   }
 
+  // Find super_admin role
+  const [superAdminRole] = await db
+    .select({ id: roles.id })
+    .from(roles)
+    .where(eq(roles.name, 'super_admin'))
+    .limit(1);
+
+  if (!superAdminRole) {
+    throw new Error('super_admin role not found. Run seed-roles first.');
+  }
+
   // Pre-check: refuse if any other master exists in this location.
   const [otherMaster] = await db
     .select({ id: employees.id })
     .from(employees)
-    .where(eq(employees.clearanceLevel, 'master'))
+    .where(eq(employees.roleId, superAdminRole.id))
     .limit(1);
 
   if (otherMaster) {
@@ -128,23 +98,24 @@ async function ensureMasterEmployee(): Promise<string> {
   }
 
   // Pick a unique name within the location (handles name-collision suffixing).
-  const name = await uniqueEmployeeName(LOCATION_ID, MASTER_NAME);
+  const name = await uniqueEmployeeName(mainLocationId, MASTER_NAME);
 
   await db.insert(employees).values({
     id: MASTER_EMPLOYEE_ID,
     name,
-    locationId: LOCATION_ID,
-    roleId: 'role-master',
-    clearanceLevel: 'master',
+    locationId: mainLocationId,
+    roleId: superAdminRole.id,
     languagePref: 'en',
     status: 'pending',
-    mustResetPassword: false,
   });
   console.log(`master employee: ${MASTER_EMPLOYEE_ID} (created, name=${name})`);
   return MASTER_EMPLOYEE_ID;
 }
 
-async function printInvite(employeeId: string, languagePref: 'en' | 'es'): Promise<void> {
+async function printInvite(
+  employeeId: string,
+  languagePref: 'en' | 'es',
+): Promise<void> {
   // Self-invite: seed operator has no prior admin, same pattern as the CLI.
   const invite = await createInvite({ employeeId, createdBy: employeeId });
   const url = `${PUBLIC_WEB_BASE_URL}/${languagePref}/activate/${invite.token}`;
@@ -160,12 +131,39 @@ async function printInvite(employeeId: string, languagePref: 'en' | 'es'): Promi
 }
 
 async function run(): Promise<void> {
-  console.log('Seeding lms-backend fixtures...\n');
-  await ensureLocation();
-  await ensureRoles();
-  await ensureStations();
+  console.log('🌱 Starting master seed...\n');
+  const SCRIPTS = [
+    'seed-locations.ts',
+    'seed-roles.ts',
+    'seed-jobs.ts',
+    'seed-stations.ts',
+  ];
+
+  for (const script of SCRIPTS) {
+    console.log(`\n===========================================`);
+    console.log(`Running ${script}...`);
+    console.log(`===========================================\n`);
+
+    const scriptPath = path.join(__dirname, script);
+    const result = spawnSync('npx', ['tsx', scriptPath], {
+      stdio: 'inherit',
+      env: process.env,
+      shell: true,
+    });
+
+    if (result.status !== 0) {
+      console.error(`\n❌ Failed executing ${script}`);
+      process.exit(1);
+    }
+  }
+
+  console.log('\n===========================================');
+  console.log('Running master employee setup (seed.ts)...');
+  console.log('===========================================\n');
+  await fetchMainLocationId();
   const masterId = await ensureMasterEmployee();
   await printInvite(masterId, 'en');
+  console.log('\n✅ All seeds completed successfully!');
 }
 
 run()

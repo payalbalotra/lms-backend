@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import * as schema from './schema';
+import * as schema from './schema.ts';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -29,6 +29,7 @@ export const sql = postgres(url, {
 
 export const db = drizzle(sql, { schema });
 export type Db = typeof db;
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Graceful pool shutdown. Called from SIGTERM/SIGINT handlers so in-flight
