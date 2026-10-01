@@ -162,6 +162,24 @@ async function run(): Promise<void> {
   console.log('===========================================\n');
   await fetchMainLocationId();
   const masterId = await ensureMasterEmployee();
+
+  console.log('\n===========================================');
+  console.log('Running seed-categories.ts...');
+  console.log('===========================================\n');
+  const catResult = spawnSync(
+    'npx',
+    ['tsx', path.join(__dirname, 'seed-categories.ts')],
+    {
+      stdio: 'inherit',
+      env: process.env,
+      shell: true,
+    },
+  );
+  if (catResult.status !== 0) {
+    console.error(`\n❌ Failed executing seed-categories.ts`);
+    process.exit(1);
+  }
+
   await printInvite(masterId, 'en');
   console.log('\n✅ All seeds completed successfully!');
 }

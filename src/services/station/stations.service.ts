@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { stations } from '../../db/employee.schema.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
@@ -7,7 +7,6 @@ import ApiError from '../../shared/utils/ApiError.ts';
 export interface PublicStation {
   id: string;
   name: string;
-  isArchived: boolean;
 }
 
 export function publicStation(
@@ -16,7 +15,6 @@ export function publicStation(
   return {
     id: s.id,
     name: s.name,
-    isArchived: s.isArchived,
   };
 }
 
@@ -26,21 +24,10 @@ export interface StationCreateInput {
 
 export interface StationPatchInput {
   name?: string;
-  isArchived?: boolean;
 }
 
-export async function listStations(opts: {
-  includeArchived: boolean;
-}): Promise<PublicStation[]> {
-  const { includeArchived } = opts;
-  const conditions = [];
-  if (!includeArchived) {
-    conditions.push(eq(stations.isArchived, false));
-  }
-  const rows = await db
-    .select()
-    .from(stations)
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
+export async function listStations(): Promise<PublicStation[]> {
+  const rows = await db.select().from(stations);
   return rows.map(publicStation);
 }
 
@@ -51,7 +38,6 @@ export async function createStation(
   await db.insert(stations).values({
     id,
     name: input.name,
-    isArchived: false,
   });
   const [row] = await db
     .select()
@@ -100,10 +86,8 @@ export async function updateStation(
   return publicStation(updated);
 }
 
-// Soft delete — flips isArchived=true. FK references from employees.station_id
-// are preserved (set null would lose history). To restore, call updateStation
-// with { isArchived: false }.
-export async function archiveStation(id: string): Promise<PublicStation> {
+// Hard delete. FK references from employee_stations use onDelete: 'cascade'.
+export async function deleteStation(id: string): Promise<void> {
   const [existing] = await db
     .select()
     .from(stations)
@@ -114,19 +98,5 @@ export async function archiveStation(id: string): Promise<PublicStation> {
       errorCode: 'STATION_NOT_FOUND',
     });
   }
-  await db
-    .update(stations)
-    .set({ isArchived: true })
-    .where(eq(stations.id, id));
-  const [updated] = await db
-    .select()
-    .from(stations)
-    .where(eq(stations.id, id))
-    .limit(1);
-  if (!updated) {
-    throw Object.assign(new ApiError('Updated station not found', 500), {
-      errorCode: 'INTERNAL_ERROR',
-    });
-  }
-  return publicStation(updated);
+  await db.delete(stations).where(eq(stations.id, id));
 }

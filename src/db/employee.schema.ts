@@ -2,7 +2,6 @@ import {
   pgTable,
   text,
   timestamp,
-  boolean,
   uniqueIndex,
   index,
   uuid,
@@ -37,9 +36,6 @@ export const roles = pgTable('roles', {
 export const jobs = pgTable('jobs', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
-  roleId: uuid('role_id')
-    .notNull()
-    .references(() => roles.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -48,7 +44,6 @@ export const jobs = pgTable('jobs', {
 export const stations = pgTable('stations', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull().default(''),
-  isArchived: boolean('is_archived').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),

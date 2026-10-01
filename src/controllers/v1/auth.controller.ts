@@ -5,11 +5,33 @@ import { db } from '../../db/client.ts';
 import { employees, invites, user } from '../../db/employee.schema.ts';
 import { session, account } from '../../db/schema.ts';
 import { auth } from '../../auth/betterauth.ts';
-import { loginUser } from '../../services/auth/auth.service.ts';
+import {
+  loginUser,
+  sendOtpService,
+  verifyEmailOtpService,
+  forgetPasswordService,
+  verifyForgetPasswordOtpService,
+  resetPasswordService,
+} from '../../services/auth/auth.service.ts';
 import {
   validateInviteCode,
   lookupInvite,
 } from '../../services/employee/employee.service.ts';
+import type {
+  SendOtpInput,
+  VerifyEmailOtpInput,
+  ForgetPasswordInput,
+  VerifyForgetPasswordOtpInput,
+  ResetPasswordInput,
+} from '../../shared/validations/auth.schema.ts';
+import httpStatus from 'http-status';
+
+const forwardAuthCookies = (res: Response, headers: Headers): void => {
+  const cookies = headers.getSetCookie();
+  if (cookies.length > 0) {
+    res.setHeader('Set-Cookie', cookies);
+  }
+};
 
 export const signUp = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -164,10 +186,6 @@ export const me = catchAsync(
 
 // ============================================================================
 // POST /api/auth/login
-// ============================================================================
-
-// ============================================================================
-// POST /api/auth/login-email
 // ============================================================================
 
 export const login = catchAsync(
@@ -394,3 +412,70 @@ export const lookupInviteController = catchAsync(
     );
   },
 );
+
+// ============================================================================
+// OTP and Password Reset
+// ============================================================================
+
+export const sendOtp = catchAsync(async (req: Request, res: Response) => {
+  const { data, headers } = await sendOtpService(
+    req.body as SendOtpInput,
+    fromNodeHeaders(req.headers),
+  );
+  forwardAuthCookies(res, headers);
+  return res
+    .status(httpStatus.OK)
+    .json(ApiResponse.success('OTP sent successfully', data));
+});
+
+export const verifyEmailOtp = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await verifyEmailOtpService(
+      req.body as VerifyEmailOtpInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(ApiResponse.success('Email verified successfully', data));
+  },
+);
+
+export const forgetPassword = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await forgetPasswordService(
+      req.body as ForgetPasswordInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(ApiResponse.success('Password reset OTP sent successfully', data));
+  },
+);
+
+export const verifyForgetPasswordOtp = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await verifyForgetPasswordOtpService(
+      req.body as VerifyForgetPasswordOtpInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(
+        ApiResponse.success('Password reset OTP verified successfully', data),
+      );
+  },
+);
+
+export const resetPassword = catchAsync(async (req: Request, res: Response) => {
+  const { data, headers } = await resetPasswordService(
+    req.body as ResetPasswordInput,
+    fromNodeHeaders(req.headers),
+  );
+  forwardAuthCookies(res, headers);
+  return res
+    .status(httpStatus.OK)
+    .json(ApiResponse.success('Password reset successfully', data));
+});

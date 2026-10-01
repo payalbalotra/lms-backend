@@ -65,7 +65,7 @@ export const createEmployee = catchAsync(
     );
 
     res.status(201).json(
-      ApiResponse.success('Success', {
+      ApiResponse.success('Employee created successfully', {
         employee: publicEmployee(row),
         invite: {
           url: buildInviteUrl(input.languagePref, invite.token),
@@ -120,7 +120,7 @@ export const resendInvite = catchAsync(
     });
 
     res.status(200).json(
-      ApiResponse.success('Success', {
+      ApiResponse.success('Invite resent successfully', {
         invite: {
           url: buildInviteUrl(employee.languagePref, invite.token),
           code: invite.code,
@@ -178,11 +178,11 @@ export const deactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Success', { employee: publicEmployee(updated!) }),
-      );
+    res.status(200).json(
+      ApiResponse.success('Employee deactivated successfully', {
+        employee: publicEmployee(updated!),
+      }),
+    );
   },
 );
 
@@ -226,11 +226,11 @@ export const reactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Success', { employee: publicEmployee(updated!) }),
-      );
+    res.status(200).json(
+      ApiResponse.success('Employee reactivated successfully', {
+        employee: publicEmployee(updated!),
+      }),
+    );
   },
 );
 
@@ -261,7 +261,7 @@ export const listEmployees = catchAsync(
     const roleMap = new Map(roleRows.map((r) => [r.id, r]));
 
     res.status(200).json(
-      ApiResponse.success('Success', {
+      ApiResponse.success('Employees retrieved successfully', {
         employees: rows.map((r) => ({
           ...publicEmployee(r.employee),
           locationName: r.locationName,
@@ -279,11 +279,12 @@ export const listEmployees = catchAsync(
 // ---------- GET /api/admin/stations ----------------------------------------
 export const listStations = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const includeArchived = req.query.includeArchived === 'true';
-    const result = await stationsService.listStations({
-      includeArchived,
-    });
-    res.status(200).json(ApiResponse.success('Success', { stations: result }));
+    const result = await stationsService.listStations();
+    res.status(200).json(
+      ApiResponse.success('Stations retrieved successfully', {
+        stations: result,
+      }),
+    );
   },
 );
 
@@ -302,7 +303,9 @@ export const createStation = catchAsync(
     const station = await stationsService.createStation({
       ...parsed.data,
     });
-    res.status(201).json(ApiResponse.success('Success', { station }));
+    res
+      .status(201)
+      .json(ApiResponse.success('Station created successfully', { station }));
   },
 );
 
@@ -328,12 +331,14 @@ export const updateStation = catchAsync(
       param.data.id,
       patch.data,
     );
-    res.status(200).json(ApiResponse.success('Success', { station }));
+    res
+      .status(200)
+      .json(ApiResponse.success('Station updated successfully', { station }));
   },
 );
 
-// ---------- POST /api/admin/stations/:id/archive ---------------------------
-export const archiveStation = catchAsync(
+// ---------- DELETE /api/admin/stations/:id ---------------------------------
+export const deleteStation = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -346,8 +351,10 @@ export const archiveStation = catchAsync(
         code: 'INVALID_INPUT',
       });
     }
-    const station = await stationsService.archiveStation(param.data.id);
-    res.status(200).json(ApiResponse.success('Success', { station }));
+    await stationsService.deleteStation(param.data.id);
+    res
+      .status(200)
+      .json(ApiResponse.success('Station deleted successfully', { ok: true }));
   },
 );
 
@@ -359,7 +366,11 @@ export const archiveStation = catchAsync(
 export const listRoles = catchAsync(
   async (_req: Request, res: Response): Promise<void> => {
     const result = await rolesService.listRoles();
-    res.status(200).json(ApiResponse.success('Success', { roles: result }));
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Roles retrieved successfully', { roles: result }),
+      );
   },
 );
 
@@ -376,7 +387,9 @@ export const createRole = catchAsync(
       throw parsed.error;
     }
     const role = await rolesService.createRole(parsed.data);
-    res.status(201).json(ApiResponse.success('Success', { role }));
+    res
+      .status(201)
+      .json(ApiResponse.success('Role created successfully', { role }));
   },
 );
 
@@ -399,7 +412,9 @@ export const updateRole = catchAsync(
       throw patch.error;
     }
     const role = await rolesService.updateRole(param.data.id, patch.data);
-    res.status(200).json(ApiResponse.success('Success', { role }));
+    res
+      .status(200)
+      .json(ApiResponse.success('Role updated successfully', { role }));
   },
 );
 
@@ -418,7 +433,9 @@ export const deleteRole = catchAsync(
       });
     }
     await rolesService.deleteRole(param.data.id);
-    res.status(200).json(ApiResponse.success('Success', { ok: true }));
+    res
+      .status(200)
+      .json(ApiResponse.success('Role deleted successfully', { ok: true }));
   },
 );
 
@@ -430,7 +447,11 @@ export const deleteRole = catchAsync(
 export const listLocations = catchAsync(
   async (_req: Request, res: Response): Promise<void> => {
     const result = await locationsService.listLocations();
-    res.status(200).json(ApiResponse.success('Success', { locations: result }));
+    res.status(200).json(
+      ApiResponse.success('Locations retrieved successfully', {
+        locations: result,
+      }),
+    );
   },
 );
 
@@ -447,7 +468,9 @@ export const createLocation = catchAsync(
       throw parsed.error;
     }
     const location = await locationsService.createLocation(parsed.data);
-    res.status(201).json(ApiResponse.success('Success', { location }));
+    res
+      .status(201)
+      .json(ApiResponse.success('Location created successfully', { location }));
   },
 );
 
@@ -473,7 +496,9 @@ export const updateLocation = catchAsync(
       param.data.id,
       patch.data,
     );
-    res.status(200).json(ApiResponse.success('Success', { location }));
+    res
+      .status(200)
+      .json(ApiResponse.success('Location updated successfully', { location }));
   },
 );
 
@@ -492,7 +517,9 @@ export const deleteLocation = catchAsync(
       });
     }
     await locationsService.deleteLocation(param.data.id);
-    res.status(200).json(ApiResponse.success('Success', { ok: true }));
+    res
+      .status(200)
+      .json(ApiResponse.success('Location deleted successfully', { ok: true }));
   },
 );
 

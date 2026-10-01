@@ -1,8 +1,13 @@
 import { betterAuth } from 'better-auth';
+import { emailOTP } from 'better-auth/plugins';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from '../db/client.ts';
 import config from '../config/index.ts';
 import { user, session, account, verification } from '../db/schema.ts';
+import { resend } from '../shared/utils/ResendClient.ts';
+import { getAuthEmailTemplate } from '../shared/utils/emailTemplates.ts';
+import { logger } from '../config/logger.ts';
+import ApiError from '../shared/utils/ApiError.ts';
 
 /**
  * Better Auth instance.
@@ -64,4 +69,51 @@ export const auth = betterAuth({
   secret:
     process.env.BETTER_AUTH_SECRET ??
     'dev-only-secret-do-not-use-in-prod-32+chars',
+
+  // 7. Plugins
+  plugins: [
+    emailOTP({
+      async sendVerificationOTP({ email, otp, type }) {
+        const subject =
+          type === 'sign-in'
+            ? 'Your sign-in code'
+            : type === 'email-verification'
+              ? 'Your security verification code'
+              : 'Reset your password';
+
+        const title =
+          type === 'sign-in'
+            ? 'Sign in to your account.'
+            : type === 'email-verification'
+              ? 'Verify your email.'
+              : 'Reset your password.';
+
+        const bodyText =
+          type === 'sign-in'
+            ? `We sent a six-digit code to <strong style="color:#333333;">${email}</strong>. Enter it to sign in to your account.`
+            : type === 'email-verification'
+              ? `We sent a six-digit code to <strong style="color:#333333;">${email}</strong>. Enter it to confirm your address.`
+              : `We sent a six-digit code to <strong style="color:#333333;">${email}</strong>. Enter it to securely reset your password.`;
+
+        const { data, error } = await resend.emails.send({
+          from: 'LMS <noreply@mosaiceffect.in>',
+          to: email,
+          subject,
+          html: getAuthEmailTemplate(title, bodyText, otp),
+        });
+
+        if (error) {
+          logger.error({ resendError: error }, 'Failed to send OTP email');
+          throw new ApiError(
+            'Failed to send verification email. Please try again.',
+            503,
+            true,
+          );
+        } else {
+          logger.info(`OTP email sent successfully to emailId: ${data?.id}`);
+        }
+      },
+      expiresIn: 300,
+    }),
+  ],
 });

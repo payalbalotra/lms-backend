@@ -2,8 +2,10 @@ import express, { type Router } from 'express';
 import config from '../../config/index.ts';
 import authRoute from './auth.route.ts';
 import employeesRoute from './employees.route.ts';
-import libraryRoute, { proceduresPublicRoute } from './library.route.ts';
+import proceduresRoute from './procedures.route.ts';
+import categoriesRoute from './categories.route.ts';
 import uploadsRoute from './uploads.route.ts';
+import jobsRoute from './jobs.route.ts';
 
 const router: Router = express.Router();
 
@@ -13,20 +15,24 @@ const defaultRoutes = [
     route: authRoute,
   },
   {
+    path: '/categories',
+    route: categoriesRoute,
+  },
+  {
     path: '/procedures',
-    route: proceduresPublicRoute,
+    route: proceduresRoute,
   },
   {
     path: '/employees',
     route: employeesRoute,
   },
   {
-    path: '/library',
-    route: libraryRoute,
-  },
-  {
     path: '/uploads',
     route: uploadsRoute,
+  },
+  {
+    path: '/jobs',
+    route: jobsRoute,
   },
 ];
 

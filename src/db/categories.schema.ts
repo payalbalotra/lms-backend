@@ -1,42 +1,41 @@
-import {
-  pgTable,
-  text,
-  boolean,
-  timestamp,
-  uniqueIndex,
-  index,
-  uuid,
-} from 'drizzle-orm/pg-core';
-import { sql as drizzleSql } from 'drizzle-orm';
-import { locations, employees } from './employee.schema.ts';
+import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { user } from './auth.schema.ts';
 
-export const categories = pgTable(
-  'categories',
-  {
-    id: text('id').primaryKey(),
-    locationId: uuid('location_id')
-      .notNull()
-      .references(() => locations.id, { onDelete: 'restrict' }),
-    slug: text('slug').notNull(),
-    nameEn: text('name_en').notNull(),
-    nameEs: text('name_es').notNull(),
-    isArchived: boolean('is_archived').notNull().default(false),
-    createdAt: timestamp('created_at', { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    createdBy: uuid('created_by')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'restrict' }),
-  },
-  (t) => ({
-    byLocation: index('categories_location_idx').on(t.locationId),
-    // Slug is unique per active (non-archived) category at the location;
-    // archived rows are ignored so a future recycle doesn't trip the index.
-    slugUnique: uniqueIndex('categories_location_slug_uniq')
-      .on(t.locationId, drizzleSql`lower(${t.slug})`)
-      .where(drizzleSql`${t.isArchived} = false`),
-  }),
-);
+export const categoryTypes = ['general', 'station_based'] as const;
+export type CategoryType = (typeof categoryTypes)[number];
+
+export const categories = pgTable('categories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  nameEn: text('name_en').notNull(),
+  nameEs: text('name_es').notNull(),
+  categoryType: text('category_type').$type<CategoryType>(),
+  categoryIcon: text('category_icon'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  createdBy: text('created_by')
+    .notNull()
+    .references(() => user.id, { onDelete: 'restrict' }),
+});
+
+export const subcategories = pgTable('subcategories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  categoryId: uuid('category_id')
+    .notNull()
+    .references(() => categories.id, { onDelete: 'cascade' }),
+  nameEn: text('name_en').notNull(),
+  nameEs: text('name_es').notNull(),
+  subcategoryIcon: text('subcategory_icon'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  createdBy: text('created_by')
+    .notNull()
+    .references(() => user.id, { onDelete: 'restrict' }),
+});
+
+export type Subcategory = typeof subcategories.$inferSelect;
+export type NewSubcategory = typeof subcategories.$inferInsert;
 
 export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
