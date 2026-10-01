@@ -81,3 +81,45 @@ export const loginSchema = z.strictObject({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ActivateInput = z.infer<typeof activateSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
+
+export const sendOtpSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+});
+
+export const verifyEmailOtpSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+  otp: z.string().min(1, 'OTP is required'),
+});
+
+export const forgetPasswordSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+});
+
+export const verifyForgetPasswordOtpSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+  otp: z.string().min(1, 'OTP is required'),
+});
+
+export const resetPasswordSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+  otp: z.string().min(1, 'OTP is required'),
+  password: newPasswordField,
+});
+
+export type SendOtpInput = z.infer<typeof sendOtpSchema>;
+export type VerifyEmailOtpInput = z.infer<typeof verifyEmailOtpSchema>;
+export type ForgetPasswordInput = z.infer<typeof forgetPasswordSchema>;
+export type VerifyForgetPasswordOtpInput = z.infer<
+  typeof verifyForgetPasswordOtpSchema
+>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

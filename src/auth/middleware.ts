@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../db/client.ts';
-import { employees } from '../db/schema.ts';
+import { employees, user } from '../db/schema.ts';
 import { session as sessionTable } from '../db/schema.ts';
 import { auth } from './betterauth.ts';
 
@@ -102,23 +102,39 @@ export async function requireAuth(
     .limit(1);
 
   if (!employee) {
-    console.log(
-      `[Auth Debug] No employee record found. Bypassing as Super Admin.`,
-    );
-    // Super admins have no employee record. Bypass employee checks downstream.
-    req.session = {
-      id: sessionId,
-      employeeId: 'super-admin', // dummy ID to satisfy types
-    };
-    req.isSuperAdmin = true;
-    req.employee = {
-      id: userId,
-      locationId: 'global',
-      roleId: 'super-admin',
-    };
-    req.deviceMode =
-      req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
-    return next();
+    const [usr] = await db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    if (usr && usr.role === 'super_admin') {
+      console.log(
+        `[Auth Debug] No employee record found. Validated as Super Admin.`,
+      );
+      req.session = {
+        id: sessionId,
+        employeeId: 'super-admin', // dummy ID to satisfy types
+      };
+      req.isSuperAdmin = true;
+      req.employee = {
+        id: userId,
+        userId: userId,
+        locationId: 'global',
+        roleId: 'super-admin',
+      };
+      req.deviceMode =
+        req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
+      return next();
+    } else {
+      res.status(403).json({
+        error: {
+          code: 'FORBIDDEN',
+          message: 'No employee record found for this user.',
+        },
+      });
+      return;
+    }
   }
 
   if (employee.status !== 'active') {
@@ -135,6 +151,7 @@ export async function requireAuth(
   };
   req.employee = {
     id: employee.id,
+    userId: userId,
     locationId: employee.locationId,
     roleId: employee.roleId,
   };
