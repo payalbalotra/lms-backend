@@ -37,16 +37,13 @@ export const stationCreateSchema = z.object({
 });
 export const stationPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  isArchived: z.boolean().optional(),
 });
 
 export const roleCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  clearanceLevel: clearanceEnum,
 });
 export const rolePatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  clearanceLevel: clearanceEnum.optional(),
 });
 
 export const locationCreateSchema = z.object({

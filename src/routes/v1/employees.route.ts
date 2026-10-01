@@ -20,10 +20,7 @@ employeesRoute.post('/:id/reactivate', employeesController.reactivate);
 employeesRoute.get('/stations', employeesController.listStations);
 employeesRoute.post('/stations', employeesController.createStation);
 employeesRoute.patch('/stations/:id', employeesController.updateStation);
-employeesRoute.post(
-  '/stations/:id/archive',
-  employeesController.archiveStation,
-);
+employeesRoute.delete('/stations/:id', employeesController.deleteStation);
 
 // ---- Roles -----------------------------------------------------------------
 employeesRoute.get('/roles', employeesController.listRoles);

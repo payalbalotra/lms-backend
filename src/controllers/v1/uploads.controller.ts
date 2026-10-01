@@ -65,7 +65,11 @@ export const deleteUploadedAsset = catchAsync(
     }
 
     const result = await requestDeleteUpload(parsed.data);
-    res.status(200).json(ApiResponse.success('Success', { data: result }));
+    res.status(200).json(
+      ApiResponse.success('Uploaded Asset deleted successfully', {
+        data: result,
+      }),
+    );
   },
 );
 
@@ -105,5 +109,7 @@ async function presignHandler(
   }
 
   const result = await service(parsed.data);
-  res.status(200).json(ApiResponse.success('Success', { data: result }));
+  res
+    .status(200)
+    .json(ApiResponse.success('URL generated successfully', { data: result }));
 }
