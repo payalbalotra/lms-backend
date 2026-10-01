@@ -19,8 +19,8 @@ async function seedStations() {
     if (existing.length === 0) {
       const newId = crypto.randomUUID();
       await sql`
-        INSERT INTO stations (id, name, is_archived)
-        VALUES (${newId}, ${station.name}, false)
+        INSERT INTO stations (id, name)
+        VALUES (${newId}, ${station.name})
       `;
     }
   }

@@ -127,6 +127,41 @@
       "when": 1790593364838,
       "tag": "0018_typical_bill_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790748185550,
+      "tag": "0019_clumsy_moira_mactaggert",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790753524728,
+      "tag": "0020_workable_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790760256941,
+      "tag": "0021_wealthy_marauders",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790764447578,
+      "tag": "0022_many_kid_colt",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790771022995,
+      "tag": "0023_little_praxagora",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,6 @@ import {
   pgTable,
   text,
   timestamp,
-  boolean,
   uuid,
   jsonb,
   uniqueIndex,
@@ -36,9 +35,6 @@ export const roles = pgTable('roles', {
 export const jobs = pgTable('jobs', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull().unique(),
-  roleId: uuid('role_id')
-    .notNull()
-    .references(() => roles.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -47,7 +43,6 @@ export const jobs = pgTable('jobs', {
 export const stations = pgTable('stations', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull().default(''),
-  isArchived: boolean('is_archived').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -58,33 +53,38 @@ export const stations = pgTable('stations', {
 // stable URL-safe handle and is unique per active row in the same location.
 // No icon column — icon lives in the frontend as a slug->ri-* map. No
 // sort_order column — display order = (created_at ASC, slug ASC).
-export const categories = pgTable(
-  'categories',
-  {
-    id: text('id').primaryKey(),
-    locationId: uuid('location_id')
-      .notNull()
-      .references(() => locations.id, { onDelete: 'restrict' }),
-    slug: text('slug').notNull(),
-    nameEn: text('name_en').notNull(),
-    nameEs: text('name_es').notNull(),
-    isArchived: boolean('is_archived').notNull().default(false),
-    createdAt: timestamp('created_at', { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    createdBy: uuid('created_by')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'restrict' }),
-  },
-  (t) => ({
-    byLocation: index('categories_location_idx').on(t.locationId),
-    // Slug is unique per active (non-archived) category at the location;
-    // archived rows are ignored so a future recycle doesn't trip the index.
-    slugUnique: uniqueIndex('categories_location_slug_uniq')
-      .on(t.locationId, drizzleSql`lower(${t.slug})`)
-      .where(drizzleSql`${t.isArchived} = false`),
-  }),
-);
+export const categoryTypes = ['general', 'station_based'] as const;
+export type CategoryType = (typeof categoryTypes)[number];
+
+export const categories = pgTable('categories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  nameEn: text('name_en').notNull(),
+  nameEs: text('name_es').notNull(),
+  categoryType: text('category_type').$type<CategoryType>(),
+  categoryIcon: text('category_icon'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  createdBy: text('created_by')
+    .notNull()
+    .references(() => user.id, { onDelete: 'restrict' }),
+});
+
+export const subcategories = pgTable('subcategories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  categoryId: uuid('category_id')
+    .notNull()
+    .references(() => categories.id, { onDelete: 'cascade' }),
+  nameEn: text('name_en').notNull(),
+  nameEs: text('name_es').notNull(),
+  subcategoryIcon: text('subcategory_icon'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  createdBy: text('created_by')
+    .notNull()
+    .references(() => user.id, { onDelete: 'restrict' }),
+});
 
 // ============================================================================
 // Employees, sessions
@@ -193,17 +193,16 @@ export const procedures = pgTable(
     titleEs: text('title_es').notNull(),
     purposeEn: text('purpose_en').notNull(),
     purposeEs: text('purpose_es').notNull(),
-    // FK to categories.id; SET NULL on category archive keeps the procedure
-    // reachable (the reader renders "—" instead of the category pill).
-    categoryId: text('category_id').references(() => categories.id, {
+    // FK to subcategories.id
+    subcategoryId: uuid('subcategory_id').references(() => subcategories.id, {
       onDelete: 'set null',
     }),
     status: text('status').$type<ProcedureStatus>().notNull().default('draft'),
     blocksEn: jsonb('blocks_en').$type<unknown>().notNull(),
     blocksEs: jsonb('blocks_es').$type<unknown>().notNull(),
-    createdBy: uuid('created_by')
+    createdBy: text('created_by')
       .notNull()
-      .references(() => employees.id, { onDelete: 'restrict' }),
+      .references(() => user.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -213,7 +212,7 @@ export const procedures = pgTable(
   },
   (t) => ({
     slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
-    byCategory: index('procedures_category_idx').on(t.categoryId),
+    bySubcategory: index('procedures_subcategory_idx').on(t.subcategoryId),
     byStatus: index('procedures_status_idx').on(t.status),
   }),
 );
