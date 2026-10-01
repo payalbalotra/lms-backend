@@ -29,6 +29,7 @@ declare global {
        */
       employee?: Partial<AuthedEmployee> & {
         id: string;
+        userId?: string;
         locationId: string;
         roleId: string;
       };

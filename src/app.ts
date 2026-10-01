@@ -86,12 +86,13 @@ app.get('/health/db', async (_req: Request, res: Response) => {
   }
 });
 
-app.use('/api', router);
+app.use('/api/v1', router);
 
 // -------------------------
 //  Better Auth
 // -------------------------
-// Better Auth's built-in endpoints (must be after /api router so custom routes match first)
+// Better Auth's built-in endpoints
+// NOTE: Better Auth defaults to /api/auth, but we can leave it as is or configure it if needed.
 app.all('/api/auth/{*path}', toNodeHandler(auth));
 // -------------------------
 //  Error Handling
