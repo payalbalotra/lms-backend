@@ -19,36 +19,10 @@ export const listCategories = catchAsync(
       });
     }
 
-    const categoryType = req.query.categoryType as CategoryType | undefined;
-    const cats = await categoriesService.listCategories({ categoryType });
+    const cats = await categoriesService.listCategories();
     res.status(200).json(
       ApiResponse.success('Categories retrieved successfully', {
         categories: cats,
-        totalCount: cats.length,
-      }),
-    );
-  },
-);
-
-export const getCategorySubcategories = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
-    const id = req.params.id;
-    if (typeof id !== 'string' || id.length === 0) {
-      throw new ApiError('Missing category id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const cat = await categoriesService.getCategoryWithSubcategories(id);
-    res.status(200).json(
-      ApiResponse.success('Category Subcategories retrieved successfully', {
-        category: cat,
       }),
     );
   },
@@ -142,7 +116,8 @@ export const updateCategory = catchAsync(
   },
 );
 
-export const deleteCategory = catchAsync(
+// DELETE /api/admin/library/categories/:id
+export const deleteCategoryAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -160,9 +135,7 @@ export const deleteCategory = catchAsync(
     await categoriesService.deleteCategory(id);
     res
       .status(200)
-      .json(
-        ApiResponse.success('Category deleted successfully', { deleted: true }),
-      );
+      .json(ApiResponse.success('Category deleted successfully', { ok: true }));
   },
 );
 
@@ -174,49 +147,10 @@ export const updateSubcategory = catchAsync(
       });
     }
 
-    const subId = req.params.subId;
-    if (typeof subId !== 'string' || subId.length === 0) {
-      throw new ApiError('Missing subcategory id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const parsed = subcategoryPatchSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-
-    const subcat = await categoriesService.updateSubcategory(
-      subId,
-      parsed.data,
-    );
+    const cats = await categoriesService.listCategories();
     res.status(200).json(
-      ApiResponse.success('Subcategory updated successfully', {
-        subcategory: subcat,
-      }),
-    );
-  },
-);
-
-export const deleteSubcategory = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
-    const subId = req.params.subId;
-    if (typeof subId !== 'string' || subId.length === 0) {
-      throw new ApiError('Missing subcategory id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    await categoriesService.deleteSubcategory(subId);
-    res.status(200).json(
-      ApiResponse.success('Subcategory deleted successfully', {
-        deleted: true,
+      ApiResponse.success('Categories retrieved successfully', {
+        categories: cats,
       }),
     );
   },

@@ -9,7 +9,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { categories } from './categories.schema.ts';
-import { employees } from './employee.schema.ts';
+import { employees } from './index.ts';
 
 export const procedureStatuses = ['draft', 'published'] as const;
 export type ProcedureStatus = (typeof procedureStatuses)[number];

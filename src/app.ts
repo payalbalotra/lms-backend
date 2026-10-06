@@ -6,7 +6,7 @@ import { toNodeHandler } from 'better-auth/node';
 import { sql } from './db/client.ts';
 import { logger } from './config/logger.ts';
 import router from './routes/v1/index.ts';
-import { auth } from './auth/betterauth.ts';
+import { auth } from './config/auth.ts';
 import { requestId } from './shared/middleware/requestId.middleware.ts';
 import { notFoundHandler } from './shared/middleware/notFound.middleware.ts';
 import {
@@ -14,6 +14,7 @@ import {
   errorHandler,
 } from './shared/middleware/errorHandler.middleware.ts';
 import config from './config/index.ts';
+import { success } from 'zod';
 
 const app: Express = express();
 
@@ -70,7 +71,10 @@ app.use(express.json({ limit: '256kb' }));
 //  Routes
 // -------------------------
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    success: { message: 'Backend is running successfully!' },
+  });
 });
 
 app.get('/health/db', async (_req: Request, res: Response) => {
@@ -91,9 +95,8 @@ app.use('/api/v1', router);
 // -------------------------
 //  Better Auth
 // -------------------------
-// Better Auth's built-in endpoints
-// NOTE: Better Auth defaults to /api/auth, but we can leave it as is or configure it if needed.
-app.all('/api/auth/{*path}', toNodeHandler(auth));
+// Better Auth's built-in endpoints (must be after /api router so custom routes match first)
+app.use('/api/auth', toNodeHandler(auth));
 // -------------------------
 //  Error Handling
 // -------------------------

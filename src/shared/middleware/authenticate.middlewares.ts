@@ -1,6 +1,6 @@
 import { fromNodeHeaders } from 'better-auth/node';
 import httpStatus from 'http-status';
-import { auth } from '../../auth/betterauth.ts';
+import { auth } from '../../config/auth.ts';
 import ApiError from '../utils/ApiError.ts';
 import catchAsync from '../utils/catchAsync.ts';
 
