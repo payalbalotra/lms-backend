@@ -21,20 +21,12 @@ export const listCategoriesAdmin = catchAsync(
       });
     }
 
-    const locationId =
-      typeof req.query.locationId === 'string' ? req.query.locationId : '';
-    if (locationId.length === 0) {
-      throw new ApiError('Missing locationId', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const includeArchived = req.query.includeArchived === 'true';
-    const cats = await categoriesService.listCategories({
-      locationId,
-      includeArchived,
-    });
-    res.status(200).json(ApiResponse.success('Success', { categories: cats }));
+    const cats = await categoriesService.listCategories();
+    res.status(200).json(
+      ApiResponse.success('Categories retrieved successfully', {
+        categories: cats,
+      }),
+    );
   },
 );
 
@@ -55,7 +47,11 @@ export const createCategoryAdmin = catchAsync(
     const cat = await categoriesService.createCategory(parsed.data, {
       employeeId: req.employee.id,
     });
-    res.status(201).json(ApiResponse.success('Success', { category: cat }));
+    res
+      .status(201)
+      .json(
+        ApiResponse.success('Category created successfully', { category: cat }),
+      );
   },
 );
 
@@ -81,12 +77,16 @@ export const updateCategoryAdmin = catchAsync(
     }
 
     const cat = await categoriesService.updateCategory(id, parsed.data);
-    res.status(200).json(ApiResponse.success('Success', { category: cat }));
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Category updated successfully', { category: cat }),
+      );
   },
 );
 
-// POST /api/admin/library/categories/:id/archive
-export const archiveCategoryAdmin = catchAsync(
+// DELETE /api/admin/library/categories/:id
+export const deleteCategoryAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -101,8 +101,10 @@ export const archiveCategoryAdmin = catchAsync(
       });
     }
 
-    const cat = await categoriesService.archiveCategory(id);
-    res.status(200).json(ApiResponse.success('Success', { category: cat }));
+    await categoriesService.deleteCategory(id);
+    res
+      .status(200)
+      .json(ApiResponse.success('Category deleted successfully', { ok: true }));
   },
 );
 
@@ -119,19 +121,11 @@ export const listCategoriesPublic = catchAsync(
       });
     }
 
-    const locationId =
-      typeof req.query.locationId === 'string' ? req.query.locationId : '';
-    if (locationId.length === 0) {
-      throw new ApiError('Missing locationId', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const includeArchived = req.query.includeArchived === 'true';
-    const cats = await categoriesService.listCategories({
-      locationId,
-      includeArchived,
-    });
-    res.status(200).json(ApiResponse.success('Success', { categories: cats }));
+    const cats = await categoriesService.listCategories();
+    res.status(200).json(
+      ApiResponse.success('Categories retrieved successfully', {
+        categories: cats,
+      }),
+    );
   },
 );

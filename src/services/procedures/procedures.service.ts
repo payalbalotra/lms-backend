@@ -6,8 +6,8 @@ import {
   categories,
   procedures,
   type ProcedureStatus,
-} from '../../db/schema.ts';
-import { logger } from '../../lib/logger.ts';
+} from '../../db/index.ts';
+import { logger } from '../../config/logger.ts';
 import {
   procedureBodySchema,
   type Block,
@@ -154,7 +154,6 @@ export async function createProcedure(
     const [cat] = await db
       .select({
         id: categories.id,
-        isArchived: categories.isArchived,
       })
       .from(categories)
       .where(eq(categories.id, input.categoryId))
@@ -163,12 +162,6 @@ export async function createProcedure(
       throw Object.assign(new ApiError('Category not found', 404), {
         errorCode: 'CATEGORY_NOT_FOUND',
       });
-    }
-    if (cat.isArchived) {
-      throw Object.assign(
-        new ApiError('Cannot assign an archived category to a procedure', 400),
-        { errorCode: 'CATEGORY_ARCHIVED' },
-      );
     }
   }
 
@@ -213,7 +206,7 @@ export async function createProcedure(
  *  (`'draft' | 'published'`). Returns the full public shape so the editor can
  *  re-open a draft without a second fetch. */
 export async function listProcedures(
-  filter: { status?: ProcedureStatus } = {},
+  filter: { status?: ProcedureStatus | undefined } = {},
 ): Promise<PublicProcedure[]> {
   const conditions = [];
   if (filter.status) {

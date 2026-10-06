@@ -1,10 +1,8 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { locations } from '../../db/schema.ts';
 import { categories } from '../../db/categories.schema.ts';
-import { slugify } from '../procedures/procedures.service.ts';
 
 // ---------------------------------------------------------------------------
 // Public wire shape — same as the row, with no Dates (categories don't expose
@@ -13,10 +11,10 @@ import { slugify } from '../procedures/procedures.service.ts';
 // ---------------------------------------------------------------------------
 export interface PublicCategory {
   id: string;
-  slug: string;
   nameEn: string;
   nameEs: string;
-  isArchived: boolean;
+  categoryType: string;
+  categoryIcon: string;
 }
 
 export function publicCategory(
@@ -24,48 +22,35 @@ export function publicCategory(
 ): PublicCategory {
   return {
     id: c.id,
-    slug: c.slug,
     nameEn: c.nameEn,
     nameEs: c.nameEs,
-    isArchived: c.isArchived,
+    categoryType: c.categoryType,
+    categoryIcon: c.categoryIcon,
   };
 }
 
-// Slug is the URL-safe handle. Lowercase letters, digits, hyphens. The form
-// autofills this from nameEn (via the same slugify used by procedures), so
-// the manager usually doesn't change it; we still validate on the way in.
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
 export interface CategoryCreateInput {
-  locationId: string;
-  slug: string;
   nameEn: string;
   nameEs: string;
+  categoryType: string;
+  categoryIcon: string;
 }
 
 export interface CategoryPatchInput {
-  nameEn?: string;
-  nameEs?: string;
-  isArchived?: boolean;
+  nameEn?: string | undefined;
+  nameEs?: string | undefined;
+  categoryType?: string | undefined;
+  categoryIcon?: string | undefined;
 }
 
 // Ordered insertion-first (created_at ASC), slug tie-break. The manager can
 // reshuffle later by renaming + archiving; if the team actually wants a
 // drag-and-drop re-order UI we'll add a sort_order column in a follow-up.
-export async function listCategories(opts: {
-  locationId: string;
-  includeArchived: boolean;
-}): Promise<PublicCategory[]> {
-  const { locationId, includeArchived } = opts;
-  const conditions = [eq(categories.locationId, locationId)];
-  if (!includeArchived) {
-    conditions.push(eq(categories.isArchived, false));
-  }
+export async function listCategories(): Promise<PublicCategory[]> {
   const rows = await db
     .select()
     .from(categories)
-    .where(and(...conditions))
-    .orderBy(asc(categories.createdAt), asc(categories.slug));
+    .orderBy(asc(categories.createdAt));
   return rows.map(publicCategory);
 }
 
@@ -75,21 +60,25 @@ export async function createCategory(
 ): Promise<PublicCategory> {
   const nameEn = input.nameEn.trim();
   const nameEs = input.nameEs.trim();
-  if (nameEn.length === 0 || nameEs.length === 0) {
-    throw Object.assign(new ApiError('nameEn and nameEs are required', 400), {
-      errorCode: 'INVALID_INPUT',
-    });
-  }
-  const slug = input.slug.trim();
-  if (!SLUG_RE.test(slug)) {
+  const categoryType = input.categoryType.trim();
+  const categoryIcon = input.categoryIcon.trim();
+  if (
+    nameEn.length === 0 ||
+    nameEs.length === 0 ||
+    categoryType.length === 0 ||
+    categoryIcon.length === 0
+  ) {
     throw Object.assign(
       new ApiError(
-        'Slug must be lowercase letters, digits, and single hyphens',
+        'nameEn, nameEs, categoryType, and categoryIcon are required',
         400,
       ),
-      { errorCode: 'INVALID_INPUT' },
+      {
+        errorCode: 'INVALID_INPUT',
+      },
     );
   }
+
   if (nameEn.length > 200 || nameEs.length > 200) {
     throw Object.assign(
       new ApiError('Names must be 200 characters or fewer', 400),
@@ -97,49 +86,15 @@ export async function createCategory(
     );
   }
 
-  // Validate the parent location exists; FK would catch this but we want a
-  // clean 400 instead of the raw constraint violation.
-  const [loc] = await db
-    .select({ id: locations.id })
-    .from(locations)
-    .where(eq(locations.id, input.locationId))
-    .limit(1);
-  if (!loc) {
-    throw Object.assign(new ApiError('Unknown location', 400), {
-      errorCode: 'LOCATION_NOT_FOUND',
-    });
-  }
-
   const id = crypto.randomUUID();
-  try {
-    await db.insert(categories).values({
-      id,
-      locationId: input.locationId,
-      slug,
-      nameEn,
-      nameEs,
-      isArchived: false,
-      createdBy: actor.employeeId,
-    });
-  } catch (err) {
-    // 23505 = unique_violation (the partial unique index
-    // categories_location_slug_uniq fired because an active row already
-    // carries this slug at this location).
-    if (
-      err instanceof Error &&
-      'code' in err &&
-      (err as { code: string }).code === '23505'
-    ) {
-      throw Object.assign(
-        new ApiError(
-          `A category with slug "${slug}" already exists at this location`,
-          409,
-        ),
-        { errorCode: 'CATEGORY_SLUG_TAKEN' },
-      );
-    }
-    throw err;
-  }
+  await db.insert(categories).values({
+    id,
+    nameEn,
+    nameEs,
+    categoryType,
+    categoryIcon,
+    createdBy: actor.employeeId,
+  });
 
   const [row] = await db
     .select()
@@ -195,8 +150,23 @@ export async function updateCategory(
     }
     clean.nameEs = v;
   }
-  if (patch.isArchived !== undefined) {
-    clean.isArchived = patch.isArchived;
+  if (patch.categoryType !== undefined) {
+    const v = patch.categoryType.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('categoryType cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    clean.categoryType = v;
+  }
+  if (patch.categoryIcon !== undefined) {
+    const v = patch.categoryIcon.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('categoryIcon cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    clean.categoryIcon = v;
   }
 
   const existing = await db
@@ -222,35 +192,16 @@ export async function updateCategory(
   return publicCategory(row);
 }
 
-// Soft delete — flips isArchived=true. Unarchive by calling updateCategory
-// with { isArchived: false }. Procedures that referenced this category
-// keep working (FK is SET NULL, so the join returns null on read).
-export async function archiveCategory(id: string): Promise<PublicCategory> {
-  const updated = await db
-    .update(categories)
-    .set({ isArchived: true })
+export async function deleteCategory(id: string): Promise<void> {
+  const [existing] = await db
+    .select({ id: categories.id })
+    .from(categories)
     .where(eq(categories.id, id))
-    .returning({ id: categories.id });
-  if (updated.length === 0) {
+    .limit(1);
+  if (!existing) {
     throw Object.assign(new ApiError('Category not found', 404), {
       errorCode: 'CATEGORY_NOT_FOUND',
     });
   }
-  const [row] = await db
-    .select()
-    .from(categories)
-    .where(eq(categories.id, id))
-    .limit(1);
-  if (!row) {
-    throw Object.assign(new ApiError('Updated category not found', 500), {
-      errorCode: 'INTERNAL_ERROR',
-    });
-  }
-  return publicCategory(row);
-}
-
-// Slug is URL-safe; pulled out so callers (e.g. the new-procedure form on the
-// frontend) can pre-fill it from the typed name.
-export function slugifyCategoryName(name: string): string {
-  return slugify(name);
+  await db.delete(categories).where(eq(categories.id, id));
 }
