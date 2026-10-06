@@ -27,3 +27,5 @@ drizzle/.snapshot
 # Postman
 *postman_collection.json
 *postman_environment.json
+
+development.env
