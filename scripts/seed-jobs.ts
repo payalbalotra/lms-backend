@@ -1,65 +1,31 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+dotenv.config({ path: 'development.env' });
 import crypto from 'node:crypto';
 import { sql, closeDb } from '../src/db/client.js';
 
-// Dynamic IDs, lookup roles by name
+// Jobs are now linked to a role string, not a roles table FK
 const JOBS = [
-  // Manager Jobs
-  {
-    name: 'Head Chef',
-    roleName: 'manager',
-  },
-  {
-    name: 'Sous Chef',
-    roleName: 'manager',
-  },
-  // Employee Jobs
-  {
-    name: 'Line Cook',
-    roleName: 'employee',
-  },
-  {
-    name: 'Prep Cook',
-    roleName: 'employee',
-  },
-  {
-    name: 'Pastry Chef',
-    roleName: 'employee',
-  },
-  {
-    name: 'Dishwasher',
-    roleName: 'employee',
-  },
+  { name: 'Line Cook', role: 'employee' },
+  { name: 'Prep Cook', role: 'employee' },
+  { name: 'Dishwasher', role: 'employee' },
 ];
 
 async function seedJobs() {
   console.log('Seeding jobs...');
   for (const job of JOBS) {
-    const roleRes =
-      await sql`SELECT id FROM roles WHERE name = ${job.roleName}`;
-    if (roleRes.length === 0) {
-      console.error(
-        `Role ${job.roleName} not found for job ${job.name}. Skip.`,
-      );
-      continue;
-    }
-    const roleId = roleRes[0].id;
-
     const existing = await sql`SELECT id FROM jobs WHERE name = ${job.name}`;
     if (existing.length === 0) {
       const newId = crypto.randomUUID();
-      await sql`
-        INSERT INTO jobs (id, name, role_id)
-        VALUES (${newId}, ${job.name}, ${roleId})
-      `;
+      await sql`INSERT INTO jobs (id, name, role) VALUES (${newId}, ${job.name}, ${job.role})`;
     } else {
-      await sql`
-        UPDATE jobs
-        SET role_id = ${roleId}
-        WHERE id = ${existing[0].id}
-      `;
+      await sql`UPDATE jobs SET role = ${job.role} WHERE name = ${job.name}`;
     }
   }
+
+  // Delete jobs not in the list
+  const jobNames = JOBS.map((j) => j.name);
+  await sql`DELETE FROM jobs WHERE name != ALL(${jobNames})`;
+
   console.log('Jobs seeded successfully.');
 }
 

@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+dotenv.config({ path: 'development.env' });
 import crypto from 'node:crypto';
 import { sql, closeDb } from '../src/db/client.ts';
 

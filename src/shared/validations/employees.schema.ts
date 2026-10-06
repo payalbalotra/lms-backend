@@ -1,18 +1,14 @@
 import { z } from 'zod';
+import { ROLES } from '../../../src/db/employee.schema.ts';
 
-export const clearanceEnum = z.enum([
-  'general',
-  'station',
-  'confidential',
-  'master',
-]);
+export const roleEnum = z.enum(ROLES);
 export const statusEnum = z.enum(['pending', 'active', 'deactivated', 'all']);
 
 export const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  email: z.string().email().toLowerCase().optional(),
+  email: z.string().email().toLowerCase(),
   locationId: z.string().min(1).max(64),
-  roleId: z.string().min(1).max(64),
+  role: roleEnum.default('employee'),
   jobIds: z.array(z.string().min(1).max(64)).optional().default([]),
   stationIds: z.array(z.string().min(1).max(64)).optional().default([]),
   employeeCode: z
@@ -37,16 +33,6 @@ export const stationCreateSchema = z.object({
 });
 export const stationPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  isArchived: z.boolean().optional(),
-});
-
-export const roleCreateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  clearanceLevel: clearanceEnum,
-});
-export const rolePatchSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  clearanceLevel: clearanceEnum.optional(),
 });
 
 export const locationCreateSchema = z.object({
@@ -54,4 +40,11 @@ export const locationCreateSchema = z.object({
 });
 export const locationPatchSchema = z.object({
   name: z.string().trim().min(1).max(120),
+});
+
+export const jobCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+export const jobPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
 });

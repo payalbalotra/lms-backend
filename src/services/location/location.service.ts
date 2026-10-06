@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, locations } from '../../db/employee.schema.ts';
+import { employees, locations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 
 export interface PublicLocation {
