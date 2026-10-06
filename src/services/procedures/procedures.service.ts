@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import {
-  categories,
+  subcategories,
   procedures,
   type ProcedureStatus,
 } from '../../db/index.ts';
@@ -15,8 +15,8 @@ import {
   type ProcedureBody,
 } from '../../db/procedure.schema.ts';
 import {
-  publicCategory,
-  type PublicCategory,
+  publicSubcategory,
+  type PublicSubcategory,
 } from '../categories/categories.service.ts';
 
 // Wire shape returned by the API. Same fields as the row, with Date
@@ -32,7 +32,7 @@ export interface PublicProcedure {
   titleEs: string;
   purposeEn: string;
   purposeEs: string;
-  category: PublicCategory | null;
+  subcategory: PublicSubcategory | null;
   status: ProcedureStatus;
   bodyEn: ProcedureBody;
   bodyEs: ProcedureBody;
@@ -64,10 +64,10 @@ export function parseStoredBody(raw: unknown, where: string): ProcedureBody {
 }
 
 // Drizzle's leftJoin selects return one row per procedure with the joined
-// category (or null). publicProcedure takes that row shape directly.
+// subcategory (or null). publicProcedure takes that row shape directly.
 export function publicProcedure(
   row: Readonly<typeof procedures.$inferSelect> & {
-    category: typeof categories.$inferSelect | null;
+    subcategory: typeof subcategories.$inferSelect | null;
   },
 ): PublicProcedure {
   const p = row;
@@ -78,7 +78,7 @@ export function publicProcedure(
     titleEs: p.titleEs,
     purposeEn: p.purposeEn,
     purposeEs: p.purposeEs,
-    category: p.category ? publicCategory(p.category) : null,
+    subcategory: p.subcategory ? publicSubcategory(p.subcategory) : null,
     status: p.status,
     bodyEn: parseStoredBody(p.blocksEn, `${p.id}/blocksEn`),
     bodyEs: parseStoredBody(p.blocksEs, `${p.id}/blocksEs`),
@@ -147,20 +147,20 @@ export async function createProcedure(
   assertCriticalStepsHaveLimits(bodyEn.blocks, 'en');
   assertCriticalStepsHaveLimits(bodyEs.blocks, 'es');
 
-  // Verify the picked category exists and isn't archived. The FK has
+  // Verify the picked subcategory exists. The FK has
   // SET NULL semantics — an invalid id would corrupt the row silently — so
   // we surface a clean 400 / 404 here.
-  if (input.categoryId !== null) {
-    const [cat] = await db
+  if (input.subcategoryId !== null) {
+    const [subcat] = await db
       .select({
         id: categories.id,
       })
-      .from(categories)
-      .where(eq(categories.id, input.categoryId))
+      .from(subcategories)
+      .where(eq(subcategories.id, input.subcategoryId))
       .limit(1);
-    if (!cat) {
-      throw Object.assign(new ApiError('Category not found', 404), {
-        errorCode: 'CATEGORY_NOT_FOUND',
+    if (!subcat) {
+      throw Object.assign(new ApiError('Subcategory not found', 404), {
+        errorCode: 'SUBCATEGORY_NOT_FOUND',
       });
     }
   }
@@ -175,7 +175,7 @@ export async function createProcedure(
     titleEs: input.titleEs,
     purposeEn: input.purposeEn,
     purposeEs: input.purposeEs,
-    categoryId: input.categoryId,
+    subcategoryId: input.subcategoryId,
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
@@ -185,10 +185,10 @@ export async function createProcedure(
   const [row] = await db
     .select({
       proc: procedures,
-      category: categories,
+      subcategory: subcategories,
     })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(eq(procedures.id, id))
     .limit(1);
   if (!row) {
@@ -198,7 +198,7 @@ export async function createProcedure(
   }
   return publicProcedure({
     ...row.proc,
-    category: row.category,
+    subcategory: row.subcategory,
   });
 }
 
@@ -213,13 +213,13 @@ export async function listProcedures(
     conditions.push(eq(procedures.status, filter.status));
   }
   const rows = await db
-    .select({ proc: procedures, category: categories })
+    .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(procedures.updatedAt));
   return rows.map((row) =>
-    publicProcedure({ ...row.proc, category: row.category }),
+    publicProcedure({ ...row.proc, subcategory: row.subcategory }),
   );
 }
 
@@ -231,13 +231,13 @@ export async function getProcedureBySlug(
   slug: string,
 ): Promise<PublicProcedure | null> {
   const [row] = await db
-    .select({ proc: procedures, category: categories })
+    .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(eq(procedures.slug, slug))
     .limit(1);
   if (!row) return null;
-  return publicProcedure({ ...row.proc, category: row.category });
+  return publicProcedure({ ...row.proc, subcategory: row.subcategory });
 }
 
 function assertRecipeIngredientsAlign(

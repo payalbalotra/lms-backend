@@ -168,10 +168,6 @@ export const me = catchAsync(
 // POST /api/auth/login
 // ============================================================================
 
-// ============================================================================
-// POST /api/auth/login-email
-// ============================================================================
-
 export const login = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const { email, password } = req.body;
@@ -433,3 +429,70 @@ export const resetPasswordWithOtp = catchAsync(
     res.status(200).json(ApiResponse.success('Password reset successfully.'));
   },
 );
+
+// ============================================================================
+// OTP and Password Reset
+// ============================================================================
+
+export const sendOtp = catchAsync(async (req: Request, res: Response) => {
+  const { data, headers } = await sendOtpService(
+    req.body as SendOtpInput,
+    fromNodeHeaders(req.headers),
+  );
+  forwardAuthCookies(res, headers);
+  return res
+    .status(httpStatus.OK)
+    .json(ApiResponse.success('OTP sent successfully', data));
+});
+
+export const verifyEmailOtp = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await verifyEmailOtpService(
+      req.body as VerifyEmailOtpInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(ApiResponse.success('Email verified successfully', data));
+  },
+);
+
+export const forgetPassword = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await forgetPasswordService(
+      req.body as ForgetPasswordInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(ApiResponse.success('Password reset OTP sent successfully', data));
+  },
+);
+
+export const verifyForgetPasswordOtp = catchAsync(
+  async (req: Request, res: Response) => {
+    const { data, headers } = await verifyForgetPasswordOtpService(
+      req.body as VerifyForgetPasswordOtpInput,
+      fromNodeHeaders(req.headers),
+    );
+    forwardAuthCookies(res, headers);
+    return res
+      .status(httpStatus.OK)
+      .json(
+        ApiResponse.success('Password reset OTP verified successfully', data),
+      );
+  },
+);
+
+export const resetPassword = catchAsync(async (req: Request, res: Response) => {
+  const { data, headers } = await resetPasswordService(
+    req.body as ResetPasswordInput,
+    fromNodeHeaders(req.headers),
+  );
+  forwardAuthCookies(res, headers);
+  return res
+    .status(httpStatus.OK)
+    .json(ApiResponse.success('Password reset successfully', data));
+});

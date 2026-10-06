@@ -4,11 +4,6 @@ import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { categories } from '../../db/categories.schema.ts';
 
-// ---------------------------------------------------------------------------
-// Public wire shape — same as the row, with no Dates (categories don't expose
-// timestamps in the API). Icon and sort_order don't exist (icon lives in
-// frontend code; default order is created_at ASC, slug ASC).
-// ---------------------------------------------------------------------------
 export interface PublicCategory {
   id: string;
   nameEn: string;
@@ -18,7 +13,7 @@ export interface PublicCategory {
 }
 
 export function publicCategory(
-  c: Readonly<typeof categories.$inferSelect>,
+  row: Readonly<typeof categories.$inferSelect>,
 ): PublicCategory {
   return {
     id: c.id,
@@ -101,18 +96,50 @@ export async function createCategory(
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  if (!row) {
-    throw Object.assign(new ApiError('Inserted category not found', 500), {
-      errorCode: 'INTERNAL_ERROR',
-    });
-  }
-  return publicCategory(row);
+  return row;
 }
 
-export async function updateCategory(
-  id: string,
-  patch: CategoryPatchInput,
-): Promise<PublicCategory> {
+export interface SubcategoryCreateInput {
+  nameEn: string;
+  nameEs: string;
+  subcategoryIcon?: string;
+}
+
+export async function createSubcategory(
+  categoryId: string,
+  input: SubcategoryCreateInput,
+  actor: { userId: string },
+) {
+  const [category] = await db
+    .select()
+    .from(categories)
+    .where(eq(categories.id, categoryId))
+    .limit(1);
+  if (!category) {
+    throw Object.assign(new ApiError('Category not found', 404), {
+      errorCode: 'CATEGORY_NOT_FOUND',
+    });
+  }
+
+  const id = crypto.randomUUID();
+  await db.insert(subcategories).values({
+    id,
+    categoryId,
+    nameEn: input.nameEn,
+    nameEs: input.nameEs,
+    subcategoryIcon: input.subcategoryIcon,
+    createdBy: actor.userId,
+  });
+
+  const [row] = await db
+    .select()
+    .from(subcategories)
+    .where(eq(subcategories.id, id))
+    .limit(1);
+  return row;
+}
+
+export async function updateCategory(id: string, patch: CategoryPatchInput) {
   if (Object.keys(patch).length === 0) {
     throw Object.assign(
       new ApiError('Patch must include at least one field', 400),
@@ -171,25 +198,22 @@ export async function updateCategory(
 
   const existing = await db
     .update(categories)
-    .set(clean)
+    .set(patch)
     .where(eq(categories.id, id))
     .returning({ id: categories.id });
+
   if (existing.length === 0) {
     throw Object.assign(new ApiError('Category not found', 404), {
       errorCode: 'CATEGORY_NOT_FOUND',
     });
   }
+
   const [row] = await db
     .select()
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  if (!row) {
-    throw Object.assign(new ApiError('Updated category not found', 500), {
-      errorCode: 'INTERNAL_ERROR',
-    });
-  }
-  return publicCategory(row);
+  return row;
 }
 
 export async function deleteCategory(id: string): Promise<void> {

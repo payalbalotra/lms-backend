@@ -118,6 +118,7 @@ export async function requireAuth(
   };
   req.employee = {
     id: employee.id,
+    userId: userId,
     locationId: employee.locationId,
     role: employee.role,
   };

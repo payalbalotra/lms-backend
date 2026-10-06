@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { categoryTypes } from '../../db/schema.js';
 
 export const categoryCreateSchema = z.object({
   nameEn: z.string().min(1).max(200),

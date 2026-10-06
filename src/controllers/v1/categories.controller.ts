@@ -4,16 +4,14 @@ import type { Request, Response } from 'express';
 import {
   categoryCreateSchema,
   categoryPatchSchema,
+  subcategoryCreateSchema,
+  subcategoryPatchSchema,
 } from '../../shared/validations/categories.schema.ts';
 import * as categoriesService from '../../services/categories/categories.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import type { CategoryType } from '../../db/schema.ts';
 
-// ============================================================================
-// Admin routes — mounted under requireAuth + requireAdmin
-// ============================================================================
-
-// GET /api/admin/library/categories
-export const listCategoriesAdmin = catchAsync(
+export const listCategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -30,10 +28,9 @@ export const listCategoriesAdmin = catchAsync(
   },
 );
 
-// POST /api/admin/library/categories
-export const createCategoryAdmin = catchAsync(
+export const createCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.employee?.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -45,7 +42,7 @@ export const createCategoryAdmin = catchAsync(
     }
 
     const cat = await categoriesService.createCategory(parsed.data, {
-      employeeId: req.employee.id,
+      userId: req.employee.userId,
     });
     res
       .status(201)
@@ -55,8 +52,42 @@ export const createCategoryAdmin = catchAsync(
   },
 );
 
-// PATCH /api/admin/library/categories/:id
-export const updateCategoryAdmin = catchAsync(
+export const createSubcategory = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee?.userId) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const categoryId = req.params.id;
+    if (typeof categoryId !== 'string' || categoryId.length === 0) {
+      throw new ApiError('Missing category id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const parsed = subcategoryCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const subcat = await categoriesService.createSubcategory(
+      categoryId,
+      parsed.data,
+      {
+        userId: req.employee.userId,
+      },
+    );
+    res.status(201).json(
+      ApiResponse.success('Subcategory created successfully', {
+        subcategory: subcat,
+      }),
+    );
+  },
+);
+
+export const updateCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -108,12 +139,7 @@ export const deleteCategoryAdmin = catchAsync(
   },
 );
 
-// ============================================================================
-// Public read — any logged-in employee
-// ============================================================================
-
-// GET /api/procedures/categories
-export const listCategoriesPublic = catchAsync(
+export const updateSubcategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {

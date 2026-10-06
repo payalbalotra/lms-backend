@@ -151,11 +151,11 @@ export const deactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Success', { employee: publicEmployee(updated!) }),
-      );
+    res.status(200).json(
+      ApiResponse.success('Employee deactivated successfully', {
+        employee: publicEmployee(updated!),
+      }),
+    );
   },
 );
 
@@ -199,11 +199,11 @@ export const reactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Success', { employee: publicEmployee(updated!) }),
-      );
+    res.status(200).json(
+      ApiResponse.success('Employee reactivated successfully', {
+        employee: publicEmployee(updated!),
+      }),
+    );
   },
 );
 
@@ -228,7 +228,7 @@ export const listEmployees = catchAsync(
       .where(conditions.length ? and(...conditions) : undefined);
 
     res.status(200).json(
-      ApiResponse.success('Success', {
+      ApiResponse.success('Employees retrieved successfully', {
         employees: rows.map((r) => ({
           ...publicEmployee(r.employee),
           locationName: r.locationName,

@@ -32,7 +32,11 @@ export const createProcedure = catchAsync(
     const procedure = await proceduresService.createProcedure(parsed.data, {
       employeeId: req.employee.id,
     });
-    res.status(201).json(ApiResponse.success('Success', { procedure }));
+    res
+      .status(201)
+      .json(
+        ApiResponse.success('Procedure created successfully', { procedure }),
+      );
   },
 );
 
@@ -67,7 +71,11 @@ export const listProcedures = catchAsync(
     }
 
     const procedures = await proceduresService.listProcedures({ status });
-    res.status(200).json(ApiResponse.success('Success', { procedures }));
+    res.status(200).json(
+      ApiResponse.success('Procedures retrieved successfully', {
+        procedures,
+      }),
+    );
   },
 );
 
@@ -93,7 +101,11 @@ export const getProcedure = catchAsync(
         code: 'NOT_FOUND',
       });
     }
-    res.status(200).json(ApiResponse.success('Success', { procedure }));
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure retrieved successfully', { procedure }),
+      );
   },
 );
 
@@ -116,6 +128,10 @@ export const importProcedure = catchAsync(
     }
 
     const extraction = await extractProcedureFromDocument(parsed.data);
-    res.status(200).json(ApiResponse.success('Success', { extraction }));
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure imported successfully', { extraction }),
+      );
   },
 );

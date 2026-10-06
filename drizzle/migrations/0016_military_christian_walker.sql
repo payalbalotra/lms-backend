@@ -1,7 +1,7 @@
 ALTER TABLE "categories" DROP CONSTRAINT "categories_location_id_locations_id_fk";
 ALTER TABLE "employees" DROP CONSTRAINT "employees_location_id_locations_id_fk";
 ALTER TABLE "employees" DROP CONSTRAINT "employees_station_id_stations_id_fk";
-ALTER TABLE "stations" DROP CONSTRAINT "stations_location_id_locations_id_fk";
+-- -- -- -- -- -- -- -- -- ALTER TABLE "stations" DROP CONSTRAINT "stations_location_id_locations_id_fk";
 --> statement-breakpoint
 ALTER TABLE "categories" ALTER COLUMN "location_id" SET DATA TYPE uuid USING "location_id"::uuid;--> statement-breakpoint
 ALTER TABLE "employees" ALTER COLUMN "location_id" SET DATA TYPE uuid USING "location_id"::uuid;--> statement-breakpoint
