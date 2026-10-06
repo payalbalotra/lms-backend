@@ -25,7 +25,8 @@ import { sql, closeDb } from '../src/db/client.js';
 import { employees } from '../src/db/index.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db/client.js';
-// import { createInvite } from '../src/auth/invites.js';
+import { user } from '../src/db/index.js';
+import { auth } from '../src/config/auth.js';
 import { uniqueEmployeeName } from '../src/services/employee/employee.service.ts';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -34,9 +35,6 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const PUBLIC_WEB_BASE_URL =
-  process.env.PUBLIC_WEB_BASE_URL ?? 'http://localhost:3000';
 
 // We still keep a reference to the main location ID for seeding stations and the master user
 const MAIN_LOCATION_NAME = 'Mexicana Main';
@@ -103,13 +101,40 @@ async function ensureMasterEmployee(): Promise<string> {
   return MASTER_EMPLOYEE_ID;
 }
 
-async function printInvite(
-  employeeId: string,
-  languagePref: 'en' | 'es',
-): Promise<void> {
-  // Invite logic needs update after magic link refactoring.
-  console.log(`\n=== Master invite (skipped due to auth refactoring) ===`);
-  console.log(`Please use the app to send a magic link to admin@example.com\n`);
+async function ensureSuperAdminUser(): Promise<void> {
+  const email = 'admin@yopmail.com';
+  const password = 'Admin@321';
+
+  const [existingUser] = await db
+    .select()
+    .from(user)
+    .where(eq(user.email, email))
+    .limit(1);
+  if (existingUser) {
+    console.log(`Super admin user already exists: ${email}`);
+    return;
+  }
+
+  console.log(`\n===========================================`);
+  console.log(`Creating super admin user: ${email}...`);
+  try {
+    await auth.api.signUpEmail({
+      body: { email, password, name: 'Admin' },
+    });
+    // Mark as verified so they can login immediately
+    await db
+      .update(user)
+      .set({ emailVerified: true })
+      .where(eq(user.email, email));
+    console.log(
+      `✅ Super admin user created! You can login with:\nEmail: ${email}\nPassword: ${password}`,
+    );
+  } catch (err: unknown) {
+    console.error(
+      '❌ Failed to create super admin user:',
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 async function run(): Promise<void> {
@@ -142,7 +167,7 @@ async function run(): Promise<void> {
   console.log('Running master employee setup (seed.ts)...');
   console.log('===========================================\n');
   await fetchMainLocationId();
-  const masterId = await ensureMasterEmployee();
+  await ensureMasterEmployee();
 
   console.log('\n===========================================');
   console.log('Running seed-categories.ts...');
@@ -161,7 +186,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  await printInvite(masterId, 'en');
+  await ensureSuperAdminUser();
   console.log('\n✅ All seeds completed successfully!');
 }
 

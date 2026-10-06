@@ -4,13 +4,10 @@ import type { Request, Response } from 'express';
 import {
   categoryCreateSchema,
   categoryPatchSchema,
-  subcategoryCreateSchema,
-  subcategoryPatchSchema,
 } from '../../shared/validations/categories.schema.ts';
+import { subcategoryCreateSchema } from '../../shared/validations/subcategories.schema.ts';
 import * as categoriesService from '../../services/categories/categories.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
-import type { CategoryType } from '../../db/schema.ts';
-
 export const listCategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
@@ -30,7 +27,7 @@ export const listCategories = catchAsync(
 
 export const createCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee?.userId) {
+    if (!req.employee?.id) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -42,7 +39,7 @@ export const createCategory = catchAsync(
     }
 
     const cat = await categoriesService.createCategory(parsed.data, {
-      userId: req.employee.userId,
+      employeeId: req.employee.id,
     });
     res
       .status(201)
@@ -54,7 +51,7 @@ export const createCategory = catchAsync(
 
 export const createSubcategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee?.userId) {
+    if (!req.employee?.id) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -76,7 +73,7 @@ export const createSubcategory = catchAsync(
       categoryId,
       parsed.data,
       {
-        userId: req.employee.userId,
+        userId: req.employee.id,
       },
     );
     res.status(201).json(

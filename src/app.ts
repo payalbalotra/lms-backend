@@ -14,7 +14,6 @@ import {
   errorHandler,
 } from './shared/middleware/errorHandler.middleware.ts';
 import config from './config/index.ts';
-import { success } from 'zod';
 
 const app: Express = express();
 

@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { db, closeDb } from '../src/db/client.js';
-import { categories, subcategories } from '../src/db/schema.js';
+import { categories, subcategories } from '../src/db/index.js';
 
-const SYSTEM_USER_ID = 'HSXBV0T7Zl53wSr0ygxwoa4eOnTTnyEb'; // Super Admin User ID
+const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'; // Super Admin User ID
 
 async function seedCategories() {
   console.log('Seeding categories and subcategories...');
@@ -87,6 +87,7 @@ async function seedCategories() {
     const [insertedCategory] = await db
       .insert(categories)
       .values({
+        id: crypto.randomUUID(),
         nameEn: data.nameEn,
         nameEs: data.nameEs,
         categoryType: data.categoryType,
@@ -100,6 +101,7 @@ async function seedCategories() {
     // 2. Insert Subcategories
     if (data.subcats.length > 0) {
       const subcatsToInsert = data.subcats.map((subName) => ({
+        id: crypto.randomUUID(),
         categoryId: insertedCategory.id,
         nameEn: subName,
         nameEs: `${subName} (es)`, // Placeholder for spanish translation

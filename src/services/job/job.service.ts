@@ -1,6 +1,6 @@
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { jobs, type Job } from '../../db/employee.schema.ts';
+import { jobs, type Job } from '../../db/jobs.schema.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
 

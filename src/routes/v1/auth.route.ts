@@ -46,19 +46,4 @@ authRoute.post(
   resetPasswordWithOtp,
 );
 
-authRoute.post('/otp/send', validate(sendOtpSchema), sendOtp);
-authRoute.post('/verify-email', validate(verifyEmailOtpSchema), verifyEmailOtp);
-
-authRoute.post(
-  '/password/forget',
-  validate(forgetPasswordSchema),
-  forgetPassword,
-);
-authRoute.post(
-  '/password/forget/verify',
-  validate(verifyForgetPasswordOtpSchema),
-  verifyForgetPasswordOtp,
-);
-authRoute.post('/password/reset', validate(resetPasswordSchema), resetPassword);
-
 export default authRoute;

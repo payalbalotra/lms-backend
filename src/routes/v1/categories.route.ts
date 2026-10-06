@@ -1,8 +1,8 @@
 import express, { type Router } from 'express';
 import {
-  listCategoriesPublic,
-  createCategoryAdmin,
-  updateCategoryAdmin,
+  listCategories,
+  createCategory,
+  updateCategory,
   deleteCategoryAdmin,
 } from '../../controllers/v1/categories.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
@@ -18,11 +18,11 @@ import {
 const categoriesRoute: Router = express.Router();
 
 // Public read route (any logged-in employee)
-categoriesRoute.get('/', requireAuth, listCategoriesPublic);
+categoriesRoute.get('/', requireAuth, listCategories);
 
 // Admin routes for Categories
-categoriesRoute.post('/', requireAuth, requireAdmin, createCategoryAdmin);
-categoriesRoute.patch('/:id', requireAuth, requireAdmin, updateCategoryAdmin);
+categoriesRoute.post('/', requireAuth, requireAdmin, createCategory);
+categoriesRoute.patch('/:id', requireAuth, requireAdmin, updateCategory);
 categoriesRoute.delete('/:id', requireAuth, requireAdmin, deleteCategoryAdmin);
 
 // Admin routes for Subcategories

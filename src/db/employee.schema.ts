@@ -4,6 +4,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  boolean as pgBoolean,
 } from 'drizzle-orm/pg-core';
 // Note: employees.userId is `text` (not uuid) because it references user.id
 // which Better Auth generates as a nanoid text string, not a UUID.
@@ -62,7 +63,7 @@ export const employees = pgTable(
       .notNull()
       .default('en'),
     status: text('status').$type<EmployeeStatus>().notNull().default('pending'),
-    requirePasswordChange: boolean('require_password_change')
+    requirePasswordChange: pgBoolean('require_password_change')
       .notNull()
       .default(true),
     createdAt: timestamp('created_at', { withTimezone: true })

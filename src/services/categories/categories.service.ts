@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { categories } from '../../db/categories.schema.ts';
+import { subcategories } from '../../db/subcategories.schema.ts';
 
 export interface PublicCategory {
   id: string;
@@ -16,11 +17,11 @@ export function publicCategory(
   row: Readonly<typeof categories.$inferSelect>,
 ): PublicCategory {
   return {
-    id: c.id,
-    nameEn: c.nameEn,
-    nameEs: c.nameEs,
-    categoryType: c.categoryType,
-    categoryIcon: c.categoryIcon,
+    id: row.id,
+    nameEn: row.nameEn,
+    nameEs: row.nameEs,
+    categoryType: row.categoryType,
+    categoryIcon: row.categoryIcon,
   };
 }
 
@@ -96,13 +97,12 @@ export async function createCategory(
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  return row;
+  return publicCategory(row!);
 }
 
 export interface SubcategoryCreateInput {
   nameEn: string;
   nameEs: string;
-  subcategoryIcon?: string;
 }
 
 export async function createSubcategory(
@@ -127,7 +127,6 @@ export async function createSubcategory(
     categoryId,
     nameEn: input.nameEn,
     nameEs: input.nameEs,
-    subcategoryIcon: input.subcategoryIcon,
     createdBy: actor.userId,
   });
 
@@ -213,7 +212,7 @@ export async function updateCategory(id: string, patch: CategoryPatchInput) {
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  return row;
+  return publicCategory(row!);
 }
 
 export async function deleteCategory(id: string): Promise<void> {
