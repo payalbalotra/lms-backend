@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Kept in sync with the `emailAndPassword` block in src/auth/better-auth.ts.
+ * Kept in sync with the `emailAndPassword` block in src/config/auth.ts.
  * Better-auth re-checks the password length itself, so a mismatch here would
  * surface as a confusing second-stage rejection instead of a field error.
  */
@@ -9,9 +9,6 @@ export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 200;
 
 const NAME_MAX_LENGTH = 120;
-const TOKEN_MIN_LENGTH = 16;
-const TOKEN_MAX_LENGTH = 128;
-
 /**
  * Bounded but otherwise unvalidated: the only job here is to stop an unbounded
  * string from reaching the password hasher.
@@ -51,12 +48,7 @@ const newPasswordField = z
  * on the body are never forwarded to better-auth or the DB.
  */
 
-export const activateSchema = z.strictObject({
-  token: z
-    .string({ error: 'Token is required' })
-    .min(TOKEN_MIN_LENGTH, 'Invalid invite token')
-    .max(TOKEN_MAX_LENGTH, 'Invalid invite token'),
-  code: z.string().regex(/^\d{5}$/, 'Code must be exactly 5 digits'),
+export const setPasswordSchema = z.strictObject({
   password: newPasswordField,
 });
 
@@ -78,6 +70,27 @@ export const loginSchema = z.strictObject({
   password: existingPasswordField,
 });
 
+export const forgotPasswordSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+});
+
+export const resetPasswordWithOtpSchema = z.strictObject({
+  email: z
+    .string({ error: 'Email is required' })
+    .email('Invalid email address'),
+  otp: z
+    .string({ error: 'OTP is required' })
+    .length(6, 'OTP must be exactly 6 digits')
+    .regex(/^[0-9]+$/, 'OTP must contain only digits'),
+  password: newPasswordField,
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
-export type ActivateInput = z.infer<typeof activateSchema>;
+export type SetPasswordInput = z.infer<typeof setPasswordSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordWithOtpInput = z.infer<
+  typeof resetPasswordWithOtpSchema
+>;

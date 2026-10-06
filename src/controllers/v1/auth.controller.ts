@@ -1,15 +1,17 @@
 import type { Request, Response } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
-import { eq, sql, and, gt } from 'drizzle-orm';
+import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, invites, user } from '../../db/employee.schema.ts';
-import { session, account } from '../../db/schema.ts';
-import { auth } from '../../auth/betterauth.ts';
-import { loginUser } from '../../services/auth/auth.service.ts';
+import { employees, user, account } from '../../db/index.ts';
+import { session } from '../../db/index.ts';
+import { auth } from '../../config/auth.ts';
 import {
-  validateInviteCode,
-  lookupInvite,
-} from '../../services/employee/employee.service.ts';
+  loginUser,
+  forgotPasswordService,
+  resetPasswordWithOtpService,
+} from '../../services/auth/auth.service.ts';
+import config from '../../config/index.ts';
+import bcrypt from 'bcryptjs';
 
 export const signUp = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -45,7 +47,7 @@ export const signUp = catchAsync(
 import ApiError from '../../shared/utils/ApiError.ts';
 import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
-import type { Employee } from '../../db/employee.schema.ts';
+import type { Employee } from '../../db/index.ts';
 
 // ============================================================================
 // Helpers
@@ -56,7 +58,7 @@ function publicEmployee(e: Employee) {
     id: e.id,
     name: e.name,
     locationId: e.locationId,
-    roleId: e.roleId,
+    role: e.role,
     jobIds: e.jobIds,
     stationIds: e.stationIds,
     email: e.email,
@@ -188,209 +190,246 @@ export const login = catchAsync(
 );
 
 // ============================================================================
-// POST /api/auth/activate
+// POST /api/auth/set-password
+// Called by the employee AFTER clicking the magic link and being redirected
+// to /set-password. At this point the employee is already logged in via the
+// magic link session. This endpoint:
+//  1. Sets their permanent password via Better Auth.
+//  2. Marks the employee as active + clears the requirePasswordChange flag.
 // ============================================================================
 
-export const activate = catchAsync(
+export const setPassword = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const { token, code, password } = req.body;
+    const { password } = req.body as { password: string };
 
-    // 1. Validate invite + code (rate-limited on wrong code).
-    const validation = await validateInviteCode(token, code);
-
-    if (
-      !validation.ok &&
-      validation.reason === 'INVALID_CODE' &&
-      validation.inviteId
-    ) {
-      throw new ApiError('That code does not match.', 401, true, '', {
-        code: 'INVALID_CODE',
-      });
-    }
-
-    if (!validation.ok) {
-      let status = 404;
-      let errCode:
-        | 'INVITE_NOT_FOUND'
-        | 'INVITE_EXPIRED'
-        | 'INVITE_ALREADY_USED'
-        | 'INVITE_CANCELLED' = 'INVITE_NOT_FOUND';
-      if (validation.reason === 'EXPIRED') {
-        status = 410;
-        errCode = 'INVITE_EXPIRED';
-      } else if (validation.reason === 'USED') {
-        status = 410;
-        errCode = 'INVITE_ALREADY_USED';
-      } else if (validation.reason === 'CANCELLED') {
-        status = 410;
-        errCode = 'INVITE_CANCELLED';
-      }
-      throw new ApiError('Invite is not usable.', status, true, '', {
-        code: errCode,
-      });
-    }
-
-    // 2. Provision Better Auth user + account.
-    let syntheticEmail =
-      validation.employee.email || `${validation.employee.id}@lms.internal`;
-    // Better Auth standardizes emails by converting them to lowercase.
-    // We must do the same to ensure our database queries match.
-    syntheticEmail = syntheticEmail.toLowerCase();
-
-    const [existingUser] = await db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, syntheticEmail))
-      .limit(1);
-
-    if (existingUser) {
-      const [linkedEmployee] = await db
-        .select({ status: employees.status })
-        .from(employees)
-        .where(eq(employees.userId, existingUser.id))
-        .limit(1);
-
-      if (linkedEmployee && linkedEmployee.status === 'active') {
-        // Employee already fully activated — cannot re-use this invite.
-        throw new ApiError(
-          'This account is already set up. Please sign in instead.',
-          409,
-          true,
-          '',
-          { code: 'EMPLOYEE_ALREADY_ACTIVE' },
-        );
-      }
-
-      // A user row exists but the employee is still pending. This happens
-      // when the admin re-invited an employee whose prior invite was cancelled
-      // before they finished activating, or when a previous activation
-      // attempt partially failed. We update the password directly in the
-      // Better Auth account table (same bcrypt format Better Auth uses) so
-      // the new credentials take effect, then fall through to the transaction.
-      const newHash = await import('bcryptjs').then((m) =>
-        m.hash(password, 10),
-      );
-      await db
-        .update(account)
-        .set({ password: newHash })
-        .where(
-          and(
-            eq(account.userId, existingUser.id),
-            eq(account.providerId, 'credential'),
-          ),
-        );
-    } else {
-      // No user yet — create one fresh.
-      await auth.api.signUpEmail({
-        body: {
-          email: syntheticEmail,
-          password,
-          name: validation.employee.name,
-        },
-      });
-    }
-
-    // 3. Link the employee, mark active, mark invite consumed — atomic.
-    const employee = await db.transaction(async (tx) => {
-      const [u] = await tx
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(user.email, syntheticEmail))
-        .limit(1);
-      if (!u)
-        throw new ApiError('User not found after signup', 500, true, '', {
-          code: 'USER_NOT_FOUND_AFTER_SIGNUP',
-        });
-
-      const [inviteRow] = await tx
-        .select()
-        .from(invites)
-        .where(eq(invites.id, validation.invite.id))
-        .for('update')
-        .limit(1);
-      if (!inviteRow)
-        throw new ApiError('Invite not found', 410, true, '', {
-          code: 'INVITE_NOT_FOUND',
-        });
-      if (inviteRow.cancelledAt)
-        throw new ApiError('Invite cancelled', 410, true, '', {
-          code: 'INVITE_CANCELLED',
-        });
-      if (inviteRow.usedAt)
-        throw new ApiError('Invite already used', 410, true, '', {
-          code: 'INVITE_ALREADY_USED',
-        });
-      if (inviteRow.expiresAt.getTime() <= Date.now())
-        throw new ApiError('Invite expired', 410, true, '', {
-          code: 'INVITE_EXPIRED',
-        });
-
-      const [updated] = await tx
-        .update(employees)
-        .set({
-          userId: u.id,
-          status: 'active',
-        })
-        .where(eq(employees.id, validation.employee.id))
-        .returning();
-      if (!updated)
-        throw new ApiError('Employee not found', 404, true, '', {
-          code: 'EMPLOYEE_NOT_FOUND',
-        });
-
-      await tx
-        .update(invites)
-        .set({ usedAt: sql`now()` })
-        .where(eq(invites.id, validation.invite.id));
-
-      await tx
-        .update(user)
-        .set({ emailVerified: true })
-        .where(eq(user.id, u.id));
-
-      return updated;
+    // The employee must already have a session from clicking the magic link.
+    const cookieSession = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
     });
 
-    // 4. Sign in to set the session cookie and retrieve the API token.
-    const result = await loginUser({ email: syntheticEmail, password });
+    const bearerToken = (req.headers['authorization'] ?? '')
+      .replace(/^Bearer /, '')
+      .trim();
 
+    let userId: string | null = cookieSession?.user.id ?? null;
+
+    if (!userId && bearerToken) {
+      const [row] = await db
+        .select({ userId: session.userId })
+        .from(session)
+        .where(
+          and(
+            eq(session.token, bearerToken),
+            gt(session.expiresAt, new Date()),
+          ),
+        )
+        .limit(1);
+      userId = row?.userId ?? null;
+    }
+
+    if (!userId) {
+      throw new ApiError(
+        'Not authenticated. Click the invite link first.',
+        401,
+        true,
+        '',
+        {
+          code: 'UNAUTHENTICATED',
+        },
+      );
+    }
+
+    // Find the linked employee.
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.userId, userId))
+      .limit(1);
+
+    // If no employee row exists yet, the magic link just created the user but
+    // hasn't linked to an employee. Link them now using their email.z
+    if (!employee) {
+      const [userRow] = await db
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1);
+
+      if (!userRow)
+        throw new ApiError('User not found', 404, true, '', {
+          code: 'USER_NOT_FOUND',
+        });
+
+      const [emp] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.email, userRow.email))
+        .limit(1);
+
+      if (!emp)
+        throw new ApiError(
+          'No employee record found for this account.',
+          404,
+          true,
+          '',
+          {
+            code: 'EMPLOYEE_NOT_FOUND',
+          },
+        );
+
+      if (emp.status === 'deactivated')
+        throw new ApiError(
+          'This account has been deactivated.',
+          403,
+          true,
+          '',
+          {
+            code: 'EMPLOYEE_DEACTIVATED',
+          },
+        );
+
+      // Hash password and upsert into Better Auth's account table.
+      // This is the same bcrypt format Better Auth uses for credential accounts.
+      const passwordHash = await bcrypt.hash(password, 10);
+      await db
+        .insert(account)
+        .values({
+          id: crypto.randomUUID(),
+          accountId: userId,
+          providerId: 'credential',
+          userId,
+          password: passwordHash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [account.userId, account.providerId],
+          set: { password: passwordHash, updatedAt: new Date() },
+        });
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(employees)
+          .set({ userId, status: 'active', requirePasswordChange: false })
+          .where(eq(employees.id, emp.id));
+        await tx
+          .update(user)
+          .set({ emailVerified: true })
+          .where(eq(user.id, userId!));
+      });
+
+      const [updated] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.id, emp.id))
+        .limit(1);
+      return void res.status(200).json(
+        ApiResponse.success('Password set and account activated', {
+          employee: publicEmployee(updated!),
+          redirectTo: `/${updated!.languagePref}/employee/home`,
+        }),
+      );
+    }
+
+    // Employee already linked — just update password + clear flag.
+    if (!employee.requirePasswordChange) {
+      throw new ApiError('Password has already been set.', 409, true, '', {
+        code: 'PASSWORD_ALREADY_SET',
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await db
+      .update(account)
+      .set({ password: passwordHash, updatedAt: new Date() })
+      .where(
+        and(eq(account.userId, userId), eq(account.providerId, 'credential')),
+      );
+
+    await db
+      .update(employees)
+      .set({ status: 'active', requirePasswordChange: false })
+      .where(eq(employees.id, employee.id));
+
+    const [updated] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.id, employee.id))
+      .limit(1);
     res.status(200).json(
-      ApiResponse.success('Account verified and created successfully', {
-        employee: publicEmployee(employee),
-        token: result.token,
-        user: result.user,
+      ApiResponse.success('Password set and account activated', {
+        employee: publicEmployee(updated!),
+        redirectTo: `/${updated!.languagePref}/employee/home`,
       }),
     );
   },
 );
 
 // ============================================================================
-// GET /api/auth/invites/:token
+// GET /api/auth/invites/:lang/:token
+// A clean redirect endpoint so we don't have to send employees the massive Better Auth verification URL.
+export const verifyInvite = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const { lang, token } = req.params;
+    if (!token || !lang) {
+      res.status(400).send('Missing language or token');
+      return;
+    }
+
+    const betterAuthBaseUrl = config.betterAuthUrl || 'http://localhost:8000';
+    const callbackURL = encodeURIComponent(
+      `${config.frontendBaseUrl}/${lang}/employee/home`,
+    );
+    const newUserCallbackURL = encodeURIComponent(
+      `${config.frontendBaseUrl}/${lang}/set-password`,
+    );
+
+    const invitationUrl = `${betterAuthBaseUrl}/api/auth/magic-link/verify?token=${token}&callbackURL=${callbackURL}&newUserCallbackURL=${newUserCallbackURL}`;
+
+    // Redirect the browser to the Better Auth handler which will set the cookies and redirect to the frontend.
+    res.redirect(invitationUrl);
+  },
+);
 // ============================================================================
 
-export const lookupInviteController = catchAsync(
+// ============================================================================
+// POST /api/v1/auth/password/forget
+// Delegates OTP generation, storage, and email delivery to Better Auth's
+// emailOtp plugin via forgotPasswordService.
+// ============================================================================
+
+export const forgotPassword = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const token = String(req.params.token ?? '');
-    if (token.length < 16 || token.length > 128) {
-      throw new ApiError('Invite not found', 404, true, '', {
-        code: 'INVITE_NOT_FOUND',
-      });
+    const { email } = req.body as { email: string };
+
+    // Always respond with 200 regardless of whether the email exists
+    // (Better Auth already suppresses errors for unknown addresses internally).
+    try {
+      await forgotPasswordService(email);
+    } catch {
+      // Swallow silently — prevents account enumeration.
     }
 
-    const result = await lookupInvite(token);
-    if (!result.ok) {
-      throw new ApiError('Invite not found', 404, true, '', {
-        code: 'INVITE_NOT_FOUND',
-        reason: result.reason,
-      });
-    }
+    res.status(200).json(ApiResponse.success('Verification email sent.'));
+  },
+);
 
-    res.status(200).json(
-      ApiResponse.success('Invite retrieved', {
-        employeeName: result.lookup.employeeName,
-        expiresAt: result.lookup.expiresAt.toISOString(),
-        employeeStatus: result.lookup.employeeStatus,
-      }),
-    );
+// ============================================================================
+// POST /api/v1/auth/password/reset
+// Verifies the OTP via Better Auth's emailOtp plugin and updates the password.
+// Input: { email, otp, password }
+// ============================================================================
+
+export const resetPasswordWithOtp = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const { email, otp, password } = req.body as {
+      email: string;
+      otp: string;
+      password: string;
+    };
+
+    await resetPasswordWithOtpService(email, otp, password);
+
+    res.status(200).json(ApiResponse.success('Password reset successfully.'));
   },
 );

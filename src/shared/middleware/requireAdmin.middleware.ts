@@ -1,8 +1,8 @@
 import type { Response, NextFunction } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees } from '../../db/employee.schema.ts';
-import type { AuthedRequest } from '../../auth/middleware.ts';
+import { employees } from '../../db/index.ts';
+import type { AuthedRequest } from '../../config/middleware.ts';
 import type { AuthedEmployee } from '../../types/express.ts';
 
 export async function requireAdmin(
@@ -22,7 +22,7 @@ export async function requireAdmin(
       id: req.employee?.id ?? req.session.employeeId,
       name: 'Super Admin',
       locationId: 'global',
-      roleId: 'super-admin',
+      role: 'super_admin',
       email: null,
       languagePref: 'en',
       status: 'active',
@@ -35,7 +35,7 @@ export async function requireAdmin(
       id: employees.id,
       name: employees.name,
       locationId: employees.locationId,
-      roleId: employees.roleId,
+      role: employees.role,
       email: employees.email,
       languagePref: employees.languagePref,
       status: employees.status,
@@ -47,6 +47,17 @@ export async function requireAdmin(
   if (!row) {
     res.status(401).json({
       error: { code: 'EMPLOYEE_NOT_FOUND', message: 'Employee not found' },
+    });
+    return;
+  }
+
+  // Only manager and super_admin can access admin routes
+  if (row.role === 'employee') {
+    res.status(403).json({
+      error: {
+        code: 'FORBIDDEN',
+        message: 'Admin access required',
+      },
     });
     return;
   }
@@ -65,7 +76,7 @@ export async function requireAdmin(
     id: row.id,
     name: row.name,
     locationId: row.locationId,
-    roleId: row.roleId,
+    role: row.role,
     email: row.email,
     languagePref: row.languagePref,
     status: row.status,

@@ -1,7 +1,7 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 
-import { employees } from '../../db/employee.schema.ts';
-import { auth } from '../../auth/betterauth.ts';
+import { employees } from '../../db/index.ts';
+import { auth } from '../../config/auth.ts';
 
 type Employee = typeof employees.$inferSelect;
 
@@ -13,7 +13,7 @@ export interface PublicEmployeeShape {
   id: string;
   name: string;
   locationId: string;
-  roleId: string;
+  role: string;
   jobIds: string[] | null;
   stationIds: string[] | null;
   languagePref: Employee['languagePref'];
@@ -24,7 +24,7 @@ export function publicEmployeeShape(e: Employee): PublicEmployeeShape {
     id: e.id,
     name: e.name,
     locationId: e.locationId,
-    roleId: e.roleId,
+    role: e.role,
     jobIds: e.jobIds,
     stationIds: e.stationIds,
     languagePref: e.languagePref,
@@ -77,4 +77,49 @@ export async function loginUser(
     user: data.user,
     token,
   };
+}
+
+// ============================================================================
+// forgotPasswordService
+// Delegates to Better Auth's emailOtp plugin:
+//   auth.api.requestPasswordResetEmailOTP({ body: { email } })
+// Better Auth handles OTP generation, storage in the verification table,
+// and triggers sendVerificationOTP (defined in auth.ts) to send the email.
+// ============================================================================
+
+export async function forgotPasswordService(email: string): Promise<void> {
+  await auth.api.requestPasswordResetEmailOTP({
+    body: { email },
+  });
+}
+
+// ============================================================================
+// resetPasswordWithOtpService
+// Delegates to Better Auth's emailOTP plugin:
+//   auth.api.resetPasswordEmailOTP({ body: { email, otp, newPassword } })
+// Better Auth verifies the OTP against the verification table, hashes the
+// new password, and updates the credentials account row — all internally.
+// Throws if the OTP is invalid or expired.
+// ============================================================================
+
+export async function resetPasswordWithOtpService(
+  email: string,
+  otp: string,
+  newPassword: string,
+): Promise<void> {
+  const response = await auth.api.resetPasswordEmailOTP({
+    body: { email, otp, password: newPassword },
+    asResponse: true,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new ApiError(
+      error.message || 'Invalid or expired reset code.',
+      response.status || 400,
+      true,
+      '',
+      { code: error.code || 'INVALID_OTP' },
+    );
+  }
 }

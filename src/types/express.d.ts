@@ -1,16 +1,16 @@
 import 'express';
 import type { Logger } from 'pino';
+import type { Role } from '../db/employee.schema.ts';
 
 /**
  * Shape of the employee row that middleware attaches to `req.employee`
- * after a successful clearance check. Mirrors `publicEmployee` in
- * controllers/auth.ts plus the columns requireAdmin needs to read.
+ * after a successful clearance check.
  */
 export interface AuthedEmployee {
   id: string;
   name: string;
   locationId: string;
-  roleId: string;
+  role: Role;
   email: string | null;
   languagePref: 'en' | 'es';
   status: 'pending' | 'active' | 'deactivated';
@@ -23,14 +23,13 @@ declare global {
       log?: Logger;
       isSuperAdmin?: boolean;
       /**
-       * Populated by `requireAuth` with `{ id, locationId, roleId }` so any
-       * controller behind any auth-only mount can read basic identity. Routes
-       * that mount `requireAdmin` get the full AuthedEmployee attached too.
+       * Populated by `requireAuth` with `{ id, locationId, role }` so any
+       * controller behind any auth-only mount can read basic identity.
        */
       employee?: Partial<AuthedEmployee> & {
         id: string;
         locationId: string;
-        roleId: string;
+        role: Role | 'super_admin';
       };
     }
   }
