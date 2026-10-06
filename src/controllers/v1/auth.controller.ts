@@ -9,9 +9,14 @@ import {
   loginUser,
   forgotPasswordService,
   resetPasswordWithOtpService,
+  getSessionService,
 } from '../../services/auth/auth.service.ts';
 import config from '../../config/index.ts';
 import bcrypt from 'bcryptjs';
+import ApiError from '../../shared/utils/ApiError.ts';
+import ApiResponse from '../../shared/utils/ApiResponse.ts';
+import catchAsync from '../../shared/utils/catchAsync.ts';
+import { publicEmployee } from './employees.controller.ts';
 
 export const signUp = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -38,129 +43,17 @@ export const signUp = catchAsync(
 
     res
       .status(201)
-      .json(
-        ApiResponse.success('Super admin signed up successfully', { email }),
-      );
+      .json(ApiResponse.success('User signed up successfully', { email }));
   },
 );
-
-import ApiError from '../../shared/utils/ApiError.ts';
-import ApiResponse from '../../shared/utils/ApiResponse.ts';
-import catchAsync from '../../shared/utils/catchAsync.ts';
-import type { Employee } from '../../db/index.ts';
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function publicEmployee(e: Employee) {
-  return {
-    id: e.id,
-    name: e.name,
-    locationId: e.locationId,
-    role: e.role,
-    jobIds: e.jobIds,
-    stationIds: e.stationIds,
-    email: e.email,
-    languagePref: e.languagePref,
-  };
-}
-
 // ============================================================================
 // GET /api/auth/me
 // ============================================================================
 
 export const me = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    let userId: string | null = null;
-
-    // 1. Try Bearer token from Authorization header first.
-    //    better-auth returns the session token in the login response body;
-    //    the client stores it and sends it as: Authorization: Bearer <token>
-    const authHeader = req.headers['authorization'] ?? '';
-    const bearerToken = authHeader.startsWith('Bearer ')
-      ? authHeader.slice(7).trim()
-      : null;
-
-    if (bearerToken) {
-      // Look up the session directly in the DB by token.
-      const [sessionRow] = await db
-        .select({ userId: session.userId, expiresAt: session.expiresAt })
-        .from(session)
-        .where(
-          and(
-            eq(session.token, bearerToken),
-            gt(session.expiresAt, new Date()),
-          ),
-        )
-        .limit(1);
-
-      if (sessionRow) {
-        userId = sessionRow.userId;
-      }
-    }
-
-    // 2. Fall back to cookie-based session (browser clients).
-    if (!userId) {
-      const cookieSession = await auth.api.getSession({
-        headers: fromNodeHeaders(req.headers),
-      });
-      if (cookieSession) {
-        userId = cookieSession.user.id;
-      }
-    }
-
-    if (!userId) {
-      throw new ApiError('Session expired or invalid', 401, true, '', {
-        code: 'SESSION_INVALID',
-      });
-    }
-
-    // 3. Load the linked user row.
-    const [userRow] = await db
-      .select({ id: user.id, name: user.name, email: user.email })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-
-    if (!userRow) {
-      throw new ApiError('Session expired or invalid', 401, true, '', {
-        code: 'SESSION_INVALID',
-      });
-    }
-
-    // 4. Look up the employee record (not present for super admins).
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.userId, userId))
-      .limit(1);
-
-    // Super admins have no employee row — return user-level info.
-    if (!employee) {
-      return void res.status(200).json(
-        ApiResponse.success('Session retrieved', {
-          user: { id: userRow.id, name: userRow.name, email: userRow.email },
-          role: 'super_admin',
-        }),
-      );
-    }
-
-    if (employee.status !== 'active') {
-      throw new ApiError('Session expired or invalid', 401, true, '', {
-        code: 'SESSION_INVALID',
-      });
-    }
-
-    const deviceMode: 'personal' | 'shared' =
-      req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
-
-    res.status(200).json(
-      ApiResponse.success('Session retrieved', {
-        employee: publicEmployee(employee),
-        deviceMode,
-      }),
-    );
+    const session = await getSessionService(req);
+    res.status(200).json(ApiResponse.success('Session retrieved', session));
   },
 );
 

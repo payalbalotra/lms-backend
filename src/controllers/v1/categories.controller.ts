@@ -114,7 +114,7 @@ export const updateCategory = catchAsync(
 );
 
 // DELETE /api/admin/library/categories/:id
-export const deleteCategoryAdmin = catchAsync(
+export const deleteCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {

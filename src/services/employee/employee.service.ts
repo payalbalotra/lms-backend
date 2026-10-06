@@ -107,9 +107,6 @@ export async function createEmployeeTransaction(
         code: 'LOCATION_NOT_FOUND',
       });
 
-    const [role] = await tx.select({ role: jobs.role }).from(jobs).limit(1);
-    void role; // role validated via zod enum upstream
-
     if (input.stationIds && input.stationIds.length > 0) {
       const st = await tx
         .select({ id: stations.id })

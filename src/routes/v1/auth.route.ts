@@ -8,7 +8,7 @@ import {
   forgotPassword,
   resetPasswordWithOtp,
 } from '../../controllers/v1/auth.controller.ts';
-import { signInLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
+import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 import { validate } from '../../shared/middleware/validate.ts';
 import {
@@ -22,26 +22,47 @@ import {
 const authRoute: Router = express.Router();
 
 authRoute.get('/me', me);
-authRoute.post('/login', signInLimiter, validate(loginSchema), login);
+authRoute.post(
+  '/login',
+  createLimiter({
+    limit: 10,
+    skipSuccessfulRequests: true,
+    message: 'Too many sign in attempts, please try again in 15 minutes.',
+  }),
+  validate(loginSchema),
+  login,
+);
 authRoute.post(
   '/set-password',
-  signInLimiter,
+  createLimiter({
+    limit: 5,
+    message: 'Too many attempts, please try again in 15 minutes.',
+  }),
   validate(setPasswordSchema),
   setPassword,
 );
+
 authRoute.post('/sign-up', validate(signUpSchema), signUp);
 authRoute.get('/invites/:lang/:token', verifyInvite);
 
 // OTP-based password reset flow (2 steps)
 authRoute.post(
   '/password/forget',
-  signInLimiter,
+  createLimiter({
+    limit: 5,
+    message:
+      'Too many password reset requests, please try again in 15 minutes.',
+  }),
   validate(forgotPasswordSchema),
   forgotPassword,
 );
 authRoute.post(
   '/password/reset',
-  signInLimiter,
+  createLimiter({
+    limit: 5,
+    message:
+      'Too many password reset attempts, please try again in 15 minutes.',
+  }),
   validate(resetPasswordWithOtpSchema),
   resetPasswordWithOtp,
 );

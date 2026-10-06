@@ -2,13 +2,38 @@ import express, { type Router } from 'express';
 import * as locationsController from '../../controllers/v1/locations.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireAdmin } from '../../shared/middleware/requireAdmin.middleware.ts';
+import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 const locationsRoute: Router = express.Router();
 locationsRoute.use(requireAuth, requireAdmin);
 
 locationsRoute.get('/', locationsController.listLocations);
-locationsRoute.post('/', locationsController.createLocation);
-locationsRoute.patch('/:id', locationsController.updateLocation);
-locationsRoute.delete('/:id', locationsController.deleteLocation);
+
+locationsRoute.post(
+  '/',
+  createLimiter({
+    limit: 20,
+    message: 'Too many locations created, please try again later.',
+  }),
+  locationsController.createLocation,
+);
+
+locationsRoute.patch(
+  '/:id',
+  createLimiter({
+    limit: 30,
+    message: 'Too many location updates, please try again later.',
+  }),
+  locationsController.updateLocation,
+);
+
+locationsRoute.delete(
+  '/:id',
+  createLimiter({
+    limit: 20,
+    message: 'Too many location deletions, please try again later.',
+  }),
+  locationsController.deleteLocation,
+);
 
 export default locationsRoute;

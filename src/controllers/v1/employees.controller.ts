@@ -243,7 +243,7 @@ export const listEmployees = catchAsync(
 // Shared helpers
 // ============================================================================
 
-function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
+export function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
   return {
     id: e.id,
     name: e.name,

@@ -64,7 +64,15 @@ app.use(
 
 app.use(helmet());
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '256kb' }));
+
+// -------------------------
+//  Better Auth
+// -------------------------
+// Better Auth's built-in endpoints must be registered BEFORE express.json()
+// because it consumes the raw request stream.
+app.all('/api/auth/{*splat}', toNodeHandler(auth));
+
+app.use(express.json());
 
 // -------------------------
 //  Routes
@@ -91,11 +99,6 @@ app.get('/health/db', async (_req: Request, res: Response) => {
 
 app.use('/api/v1', router);
 
-// -------------------------
-//  Better Auth
-// -------------------------
-// Better Auth's built-in endpoints (must be after /api router so custom routes match first)
-app.use('/api/auth', toNodeHandler(auth));
 // -------------------------
 //  Error Handling
 // -------------------------

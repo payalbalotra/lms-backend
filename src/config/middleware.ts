@@ -1,9 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
-import { eq, and, gt } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { employees } from '../db/index.ts';
-import { session as sessionTable } from '../db/index.ts';
+
 import { auth } from './auth.ts';
 
 export interface AuthedRequest extends Request {
@@ -19,52 +19,17 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  let userId: string | null = null;
-  let sessionId: string | null = null;
+  const sessionResponse = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  });
 
-  const authHeader = req.headers['authorization'] ?? '';
-  const bearerToken = authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : null;
+  const userId = sessionResponse?.user.id;
+  const sessionId = sessionResponse?.session.id;
 
-  console.log(
-    `[Auth Debug] Checking Bearer token: ${bearerToken?.substring(0, 10)}...`,
-  );
-
-  if (bearerToken) {
-    const [row] = await db
-      .select({ userId: sessionTable.userId, id: sessionTable.id })
-      .from(sessionTable)
-      .where(
-        and(
-          eq(sessionTable.token, bearerToken),
-          gt(sessionTable.expiresAt, new Date()),
-        ),
-      )
-      .limit(1);
-
-    if (row) {
-      console.log(
-        `[Auth Debug] Found session row in DB! userId: ${row.userId}`,
-      );
-      userId = row.userId;
-      sessionId = row.id;
-    } else {
-      console.log(`[Auth Debug] Token NOT found in DB, or expired.`);
-    }
-  }
-
-  if (!userId) {
-    const cookieSession = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
-    if (cookieSession) {
-      console.log(`[Auth Debug] Found session via better-auth getSession`);
-      userId = cookieSession.user.id;
-      sessionId = cookieSession.session.id;
-    } else {
-      console.log(`[Auth Debug] better-auth getSession also returned null.`);
-    }
+  if (sessionResponse) {
+    console.log(`[Auth Debug] Found session via better-auth getSession`);
+  } else {
+    console.log(`[Auth Debug] better-auth getSession returned null.`);
   }
 
   if (!userId || !sessionId) {
