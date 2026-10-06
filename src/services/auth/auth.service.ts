@@ -2,6 +2,11 @@ import ApiError from '../../shared/utils/ApiError.ts';
 
 import { employees } from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
+import type { Request } from 'express';
+import { fromNodeHeaders } from 'better-auth/node';
+import { db } from '../../db/client.ts';
+import { user } from '../../db/index.ts';
+import { eq } from 'drizzle-orm';
 
 type Employee = typeof employees.$inferSelect;
 
@@ -16,6 +21,7 @@ export interface PublicEmployeeShape {
   role: string;
   jobIds: string[] | null;
   stationIds: string[] | null;
+  email: string;
   languagePref: Employee['languagePref'];
 }
 
@@ -27,6 +33,7 @@ export function publicEmployeeShape(e: Employee): PublicEmployeeShape {
     role: e.role,
     jobIds: e.jobIds,
     stationIds: e.stationIds,
+    email: e.email,
     languagePref: e.languagePref,
   };
 }
@@ -76,6 +83,68 @@ export async function loginUser(
   return {
     user: data.user,
     token,
+  };
+}
+
+// ============================================================================
+// getSessionService
+// Reads headers from the request, gets the session from Better Auth, and
+// retrieves the associated user and employee records.
+// ============================================================================
+
+export async function getSessionService(req: Request) {
+  const sessionResponse = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  });
+
+  const userId = sessionResponse?.user.id;
+
+  if (!userId) {
+    throw new ApiError('Session expired or invalid', 401, true, '', {
+      code: 'SESSION_INVALID',
+    });
+  }
+
+  // Load the linked user row.
+  const [userRow] = await db
+    .select({ id: user.id, name: user.name, email: user.email })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+
+  if (!userRow) {
+    throw new ApiError('Session expired or invalid', 401, true, '', {
+      code: 'SESSION_INVALID',
+    });
+  }
+
+  // Look up the employee record (not present for super admins).
+  const [employee] = await db
+    .select()
+    .from(employees)
+    .where(eq(employees.userId, userId))
+    .limit(1);
+
+  // Super admins have no employee row — return user-level info.
+  if (!employee) {
+    return {
+      user: { id: userRow.id, name: userRow.name, email: userRow.email },
+      role: 'super_admin',
+    };
+  }
+
+  if (employee.status !== 'active') {
+    throw new ApiError('Session expired or invalid', 401, true, '', {
+      code: 'SESSION_INVALID',
+    });
+  }
+
+  const deviceMode: 'personal' | 'shared' =
+    req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
+
+  return {
+    employee: publicEmployeeShape(employee),
+    deviceMode,
   };
 }
 

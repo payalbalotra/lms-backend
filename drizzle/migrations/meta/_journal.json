@@ -162,6 +162,13 @@
       "when": 1790771022995,
       "tag": "0023_little_praxagora",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791282320413,
+      "tag": "0024_spotty_malice",
+      "breakpoints": true
     }
   ]
 }

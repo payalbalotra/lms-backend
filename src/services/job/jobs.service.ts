@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { jobs, jobStations, stations, employeeJobs } from '../../db/index.ts';
-import type { Role } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 
 export interface PublicJob {
@@ -36,22 +35,16 @@ export async function listJobs(): Promise<PublicJob[]> {
 // listJobsWithStations
 // ---------------------------------------------------------------------------
 // Used by the employee creation form:
-//   1. Caller passes optional roleId → only jobs for that role are returned.
-//   2. Each job carries its linked stations so the frontend can populate the
-//      station picker client-side once the user picks a job — no second call.
+// Each job carries its linked stations so the frontend can populate the
+// station picker client-side once the user picks a job — no second call.
 // ---------------------------------------------------------------------------
 export interface PublicJobWithStations extends PublicJob {
-  roleId: string | null;
   stations: Array<{ id: string; name: string }>;
 }
 
-export async function listJobsWithStations(
-  role?: Role,
-): Promise<PublicJobWithStations[]> {
-  // 1. Fetch jobs (filtered by role when provided)
-  const jobRows = role
-    ? await db.select().from(jobs).where(eq(jobs.role, role))
-    : await db.select().from(jobs);
+export async function listJobsWithStations(): Promise<PublicJobWithStations[]> {
+  // 1. Fetch jobs
+  const jobRows = await db.select().from(jobs);
 
   if (jobRows.length === 0) return [];
 
@@ -78,7 +71,6 @@ export async function listJobsWithStations(
   return jobRows.map((j) => ({
     id: j.id,
     name: j.name,
-    roleId: j.role ?? null,
     createdAt: j.createdAt.toISOString(),
     stations: stationsByJob.get(j.id) ?? [],
   }));
@@ -92,29 +84,26 @@ export async function listJobsWithStations(
 // frontend needs to show only the stations for that job.
 // ---------------------------------------------------------------------------
 export async function getJobStations(
-  jobId: string,
+  jobIds: string[],
 ): Promise<Array<{ id: string; name: string }>> {
-  // 1. Verify the job exists.
-  const [job] = await db
-    .select({ id: jobs.id })
-    .from(jobs)
-    .where(eq(jobs.id, jobId))
-    .limit(1);
+  if (jobIds.length === 0) return [];
 
-  if (!job) {
-    throw new ApiError('Job not found', 404, true, '', {
-      code: 'JOB_NOT_FOUND',
-    });
-  }
-
-  // 2. Fetch linked stations.
+  // Fetch linked stations.
   const rows = await db
     .select({ id: stations.id, name: stations.name })
     .from(jobStations)
     .innerJoin(stations, eq(stations.id, jobStations.stationId))
-    .where(eq(jobStations.jobId, jobId));
+    .where(inArray(jobStations.jobId, jobIds));
 
-  return rows;
+  // Deduplicate stations in case multiple jobs share the same station
+  const uniqueMap = new Map<string, { id: string; name: string }>();
+  for (const row of rows) {
+    if (!uniqueMap.has(row.id)) {
+      uniqueMap.set(row.id, row);
+    }
+  }
+
+  return Array.from(uniqueMap.values());
 }
 
 export async function createJob(input: JobCreateInput): Promise<PublicJob> {

@@ -29,13 +29,3 @@ export const createLimiter = (options: {
       );
     },
   });
-
-/**
- * Only failed attempts count, so a legitimate user signing in repeatedly is
- * never throttled while credential stuffing is.
- */
-export const signInLimiter = createLimiter({
-  limit: 10,
-  skipSuccessfulRequests: true,
-  message: 'Too many sign in attempts, please try again in 15 minutes.',
-});

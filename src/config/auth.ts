@@ -1,5 +1,5 @@
 import { betterAuth } from 'better-auth';
-import { magicLink } from 'better-auth/plugins';
+import { magicLink, bearer } from 'better-auth/plugins';
 import { emailOTP } from 'better-auth/plugins/email-otp';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from '../db/client.ts';
@@ -46,6 +46,7 @@ export const auth = betterAuth({
   //    Email is a synthetic `<employeeId>@lms.internal` and never sent anywhere,
   //    so email verification stays disabled.
   plugins: [
+    bearer(),
     magicLink({
       expiresIn: 60 * 60 * 24,
       sendMagicLink: async ({ email, url }) => {

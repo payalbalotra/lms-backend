@@ -8,7 +8,6 @@ import {
 } from '../../shared/validations/employees.schema.ts';
 import * as jobsService from '../../services/job/jobs.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
-import type { Role } from '../../db/index.ts';
 
 export const listJobs = catchAsync(
   async (_req: Request, res: Response): Promise<void> => {
@@ -24,31 +23,32 @@ export const listJobs = catchAsync(
 // GET /api/v1/jobs/with-stations?role=<role>
 // Used by the employee form: returns jobs for a role, each with their stations.
 // Requires auth (any employee), but NOT admin-only.
-export const listJobsWithStations = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const role =
-      typeof req.query.role === 'string' ? (req.query.role as Role) : undefined;
-    const result = await jobsService.listJobsWithStations(role);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Jobs with stations retrieved', { jobs: result }),
-      );
-  },
-);
 
-// GET /api/v1/jobs/:id/stations
-// Returns only the stations linked to a specific job.
-// Useful when the frontend fetches stations on-demand per selected job.
+// QUERY /api/v1/jobs/stations
+// Returns the stations linked to multiple jobs, using a query parameter or body payload.
+// Useful when the frontend fetches stations on-demand for selected jobs.
 export const getJobStations = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid job id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
+    let jobIds: string[] = [];
+    const inputJobIds = req.body?.jobIds || req.query.jobIds;
+
+    if (typeof inputJobIds === 'string') {
+      jobIds = inputJobIds
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean);
+    } else if (Array.isArray(inputJobIds)) {
+      jobIds = inputJobIds.map((id) => String(id).trim()).filter(Boolean);
     }
-    const stationsList = await jobsService.getJobStations(param.data.id);
+
+    if (jobIds.length === 0) {
+      res
+        .status(200)
+        .json(ApiResponse.success('Stations retrieved', { stations: [] }));
+      return;
+    }
+
+    const stationsList = await jobsService.getJobStations(jobIds);
     res
       .status(200)
       .json(
