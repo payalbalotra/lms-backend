@@ -4,7 +4,6 @@ import {
   timestamp,
   boolean,
   uniqueIndex,
-  index,
   uuid,
 } from 'drizzle-orm/pg-core';
 // Note: employees.userId is `text` (not uuid) because it references user.id
@@ -13,52 +12,15 @@ import { sql as drizzleSql } from 'drizzle-orm';
 export * from './auth.schema.ts';
 
 import { user } from './auth.schema.ts';
+import { locations } from './locations.schema.ts';
+import { jobs } from './jobs.schema.ts';
+import { stations } from './stations.schema.ts';
 
 // ============================================================================
-// Locations, roles, stations
+// Role enum — defined here, shared across employees and jobs
 // ============================================================================
-
-export const locations = pgTable('locations', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-export const roles = pgTable('roles', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-export const jobs = pgTable('jobs', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  roleId: uuid('role_id')
-    .notNull()
-    .references(() => roles.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-export const stations = pgTable('stations', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull().default(''),
-  isArchived: boolean('is_archived').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-// Manager-defined categories (Recipes, Equipment, Station, Cleaning, Admin,
-// Delivery by default; the manager adds/renames/archives more). Slug is the
-// stable URL-safe handle and is unique per active row in the same location.
-// No icon column — icon lives in the frontend as a slug->ri-* map. No
-// sort_order column — display order = (created_at ASC, slug ASC).
+export const ROLES = ['super_admin', 'manager', 'employee'] as const;
+export type Role = (typeof ROLES)[number];
 
 // ============================================================================
 // Employees, sessions
@@ -87,10 +49,9 @@ export const employees = pgTable(
     locationId: uuid('location_id')
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
-    roleId: uuid('role_id')
-      .notNull()
-      .references(() => roles.id, { onDelete: 'restrict' }),
-    email: text('email'),
+    // Role is now a plain text enum — no FK to a roles table needed.
+    role: text('role').$type<Role>().notNull().default('employee'),
+    email: text('email').notNull(),
     jobIds: uuid('job_ids')
       .array()
       .default(drizzleSql`'{}'::uuid[]`),
@@ -102,22 +63,22 @@ export const employees = pgTable(
       .notNull()
       .default('en'),
     status: text('status').$type<EmployeeStatus>().notNull().default('pending'),
+    requirePasswordChange: boolean('require_password_change')
+      .notNull()
+      .default(true),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
     deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
   },
   (t) => ({
-    // Login name uniqueness is scoped per location; case-insensitive comparison.
     nameLocationUnique: uniqueIndex('employees_name_location_uniq').on(
       t.locationId,
       drizzleSql`lower(${t.name})`,
     ),
-    // Badge code is unique when set; multiple NULLs are allowed.
     codeUnique: uniqueIndex('employees_code_uniq')
       .on(t.employeeCode)
       .where(drizzleSql`${t.employeeCode} IS NOT NULL`),
-    // 1:1 with Better Auth's user table.
     userIdUnique: uniqueIndex('employees_user_id_uniq').on(t.userId),
   }),
 );
@@ -157,50 +118,11 @@ export const employeeStations = pgTable(
 );
 
 // ============================================================================
-// Invites (admin issues → employee activates)
-// ============================================================================
-
-export const invites = pgTable(
-  'invites',
-  {
-    id: text('id').primaryKey(),
-    employeeId: uuid('employee_id')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'cascade' }),
-    // SHA-256 of the opaque token sent in the activation URL.
-    tokenHash: text('token_hash').notNull(),
-    // bcrypt hash of the 5-digit activation code.
-    codeHash: text('code_hash').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    usedAt: timestamp('used_at', { withTimezone: true }),
-    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
-    createdBy: text('created_by').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (t) => ({
-    tokenHashUnique: uniqueIndex('invites_token_hash_uniq').on(t.tokenHash),
-    byEmployee: index('invites_employee_idx').on(t.employeeId),
-  }),
-);
-
-// ============================================================================
 // Inferred types
 // ============================================================================
 
-export type Location = typeof locations.$inferSelect;
-export type NewLocation = typeof locations.$inferInsert;
-export type Role = typeof roles.$inferSelect;
-export type NewRole = typeof roles.$inferInsert;
-export type Job = typeof jobs.$inferSelect;
-export type NewJob = typeof jobs.$inferInsert;
-export type Station = typeof stations.$inferSelect;
-export type NewStation = typeof stations.$inferInsert;
 export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;
-export type Invite = typeof invites.$inferSelect;
-export type NewInvite = typeof invites.$inferInsert;
 
 export type EmployeeJob = typeof employeeJobs.$inferSelect;
 export type NewEmployeeJob = typeof employeeJobs.$inferInsert;
