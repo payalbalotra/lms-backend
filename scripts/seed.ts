@@ -19,12 +19,13 @@
 // creates the user row at activation time.
 // ============================================================================
 
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+dotenv.config({ path: 'development.env' });
 import { sql, closeDb } from '../src/db/client.js';
-import { employees, roles } from '../src/db/schema.js';
+import { employees } from '../src/db/index.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db/client.js';
-import { createInvite } from '../src/auth/invites.js';
+// import { createInvite } from '../src/auth/invites.js';
 import { uniqueEmployeeName } from '../src/services/employee/employee.service.ts';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -71,22 +72,11 @@ async function ensureMasterEmployee(): Promise<string> {
     return existing.id;
   }
 
-  // Find super_admin role
-  const [superAdminRole] = await db
-    .select({ id: roles.id })
-    .from(roles)
-    .where(eq(roles.name, 'super_admin'))
-    .limit(1);
-
-  if (!superAdminRole) {
-    throw new Error('super_admin role not found. Run seed-roles first.');
-  }
-
   // Pre-check: refuse if any other master exists in this location.
   const [otherMaster] = await db
     .select({ id: employees.id })
     .from(employees)
-    .where(eq(employees.roleId, superAdminRole.id))
+    .where(eq(employees.role, 'super_admin'))
     .limit(1);
 
   if (otherMaster) {
@@ -98,13 +88,14 @@ async function ensureMasterEmployee(): Promise<string> {
   }
 
   // Pick a unique name within the location (handles name-collision suffixing).
-  const name = await uniqueEmployeeName(mainLocationId, MASTER_NAME);
+  const name = await uniqueEmployeeName(MASTER_NAME);
 
   await db.insert(employees).values({
     id: MASTER_EMPLOYEE_ID,
     name,
+    email: 'admin@example.com',
     locationId: mainLocationId,
-    roleId: superAdminRole.id,
+    role: 'super_admin',
     languagePref: 'en',
     status: 'pending',
   });
@@ -116,28 +107,14 @@ async function printInvite(
   employeeId: string,
   languagePref: 'en' | 'es',
 ): Promise<void> {
-  // Self-invite: seed operator has no prior admin, same pattern as the CLI.
-  const invite = await createInvite({ employeeId, createdBy: employeeId });
-  const url = `${PUBLIC_WEB_BASE_URL}/${languagePref}/activate/${invite.token}`;
-  console.log('');
-  console.log('=== Master invite (fresh each `pnpm db:seed`) ===');
-  console.log(`  URL:   ${url}`);
-  console.log(`  Code:  ${invite.code}`);
-  console.log(`  Until: ${invite.expiresAt.toISOString()}`);
-  console.log('');
-  console.log('Open the URL, enter the code, set a password — that activates');
-  console.log('Better Auth (signUpEmail creates the user row at that moment).');
-  console.log('');
+  // Invite logic needs update after magic link refactoring.
+  console.log(`\n=== Master invite (skipped due to auth refactoring) ===`);
+  console.log(`Please use the app to send a magic link to admin@example.com\n`);
 }
 
 async function run(): Promise<void> {
-  console.log('🌱 Starting master seed...\n');
-  const SCRIPTS = [
-    'seed-locations.ts',
-    'seed-roles.ts',
-    'seed-jobs.ts',
-    'seed-stations.ts',
-  ];
+  console.log(' Starting master seed...\n');
+  const SCRIPTS = ['seed-locations.ts', 'seed-jobs.ts', 'seed-stations.ts'];
 
   for (const script of SCRIPTS) {
     console.log(`\n===========================================`);
@@ -145,11 +122,15 @@ async function run(): Promise<void> {
     console.log(`===========================================\n`);
 
     const scriptPath = path.join(__dirname, script);
-    const result = spawnSync('npx', ['tsx', scriptPath], {
-      stdio: 'inherit',
-      env: process.env,
-      shell: true,
-    });
+    const result = spawnSync(
+      'npx',
+      ['tsx', '--env-file=development.env', scriptPath],
+      {
+        stdio: 'inherit',
+        env: process.env,
+        shell: true,
+      },
+    );
 
     if (result.status !== 0) {
       console.error(`\n❌ Failed executing ${script}`);

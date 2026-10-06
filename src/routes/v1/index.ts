@@ -3,9 +3,11 @@ import config from '../../config/index.ts';
 import authRoute from './auth.route.ts';
 import employeesRoute from './employees.route.ts';
 import proceduresRoute from './procedures.route.ts';
-import categoriesRoute from './categories.route.ts';
 import uploadsRoute from './uploads.route.ts';
+import stationsRoute from './stations.route.ts';
+import locationsRoute from './locations.route.ts';
 import jobsRoute from './jobs.route.ts';
+import categoriesRoute from './categories.route.ts';
 
 const router: Router = express.Router();
 
@@ -14,14 +16,7 @@ const defaultRoutes = [
     path: '/auth',
     route: authRoute,
   },
-  {
-    path: '/categories',
-    route: categoriesRoute,
-  },
-  {
-    path: '/procedures',
-    route: proceduresRoute,
-  },
+
   {
     path: '/employees',
     route: employeesRoute,
@@ -31,14 +26,28 @@ const defaultRoutes = [
     route: uploadsRoute,
   },
   {
+    path: '/stations',
+    route: stationsRoute,
+  },
+  {
+    path: '/locations',
+    route: locationsRoute,
+  },
+  {
     path: '/jobs',
     route: jobsRoute,
   },
+  {
+    path: '/categories',
+    route: categoriesRoute,
+  },
+  {
+    path: '/procedures',
+    route: proceduresRoute,
+  },
 ];
 
-const devRoutes: { path: string; route: Router }[] = [
-  // Add any development-only routes here in the future
-];
+const devRoutes: { path: string; route: Router }[] = [];
 
 defaultRoutes.forEach((route) => {
   router.use(route.path, route.route);

@@ -6,7 +6,6 @@ import { closeDb, sql } from './db/client.ts';
 const server = app.listen(config.port, () => {
   console.log(`⚙️  Server is running at port : ${config.port}`);
 
-  // Database check similar to roof-bros
   sql<{ ok: number }[]>`select 1 as ok`
     .then(() => {
       console.log('✅ Database connected successfully');

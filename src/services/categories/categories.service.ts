@@ -1,139 +1,94 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { eq, asc } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { categories, subcategories } from '../../db/schema.ts';
-import type { CategoryType } from '../../db/schema.ts';
+import { categories } from '../../db/categories.schema.ts';
 
 export interface PublicCategory {
   id: string;
   nameEn: string;
   nameEs: string;
-  categoryType: CategoryType | null;
-  categoryIcon: string | null;
+  categoryType: string;
+  categoryIcon: string;
 }
 
 export function publicCategory(
   row: Readonly<typeof categories.$inferSelect>,
 ): PublicCategory {
   return {
-    id: row.id,
-    nameEn: row.nameEn,
-    nameEs: row.nameEs,
-    categoryType: row.categoryType,
-    categoryIcon: row.categoryIcon,
-  };
-}
-
-export interface PublicSubcategory {
-  id: string;
-  categoryId: string;
-  nameEn: string;
-  nameEs: string;
-  subcategoryIcon: string | null;
-}
-
-export function publicSubcategory(
-  row: Readonly<typeof subcategories.$inferSelect>,
-): PublicSubcategory {
-  return {
-    id: row.id,
-    categoryId: row.categoryId,
-    nameEn: row.nameEn,
-    nameEs: row.nameEs,
-    subcategoryIcon: row.subcategoryIcon,
+    id: c.id,
+    nameEn: c.nameEn,
+    nameEs: c.nameEs,
+    categoryType: c.categoryType,
+    categoryIcon: c.categoryIcon,
   };
 }
 
 export interface CategoryCreateInput {
   nameEn: string;
   nameEs: string;
-  categoryType: CategoryType;
-  categoryIcon?: string;
+  categoryType: string;
+  categoryIcon: string;
 }
 
 export interface CategoryPatchInput {
-  nameEn?: string;
-  nameEs?: string;
-  categoryType?: CategoryType;
-  categoryIcon?: string;
+  nameEn?: string | undefined;
+  nameEs?: string | undefined;
+  categoryType?: string | undefined;
+  categoryIcon?: string | undefined;
 }
 
-export async function listCategories(opts?: { categoryType?: CategoryType }) {
-  const allCategories = await db
+// Ordered insertion-first (created_at ASC), slug tie-break. The manager can
+// reshuffle later by renaming + archiving; if the team actually wants a
+// drag-and-drop re-order UI we'll add a sort_order column in a follow-up.
+export async function listCategories(): Promise<PublicCategory[]> {
+  const rows = await db
     .select()
     .from(categories)
-    .where(
-      opts?.categoryType
-        ? eq(categories.categoryType, opts.categoryType)
-        : undefined,
-    )
     .orderBy(asc(categories.createdAt));
-  const allSubcats = await db
-    .select()
-    .from(subcategories)
-    .orderBy(asc(subcategories.createdAt));
-
-  return allCategories.map((c) => ({
-    id: c.id,
-    nameEn: c.nameEn,
-    nameEs: c.nameEs,
-    categoryType: c.categoryType,
-    categoryIcon: c.categoryIcon,
-    subcategories: allSubcats
-      .filter((s) => s.categoryId === c.id)
-      .map((s) => ({
-        id: s.id,
-        nameEn: s.nameEn,
-        nameEs: s.nameEs,
-        subcategoryIcon: s.subcategoryIcon,
-      })),
-  }));
-}
-
-export async function getCategoryWithSubcategories(id: string) {
-  const [category] = await db
-    .select()
-    .from(categories)
-    .where(eq(categories.id, id))
-    .limit(1);
-
-  if (!category) {
-    throw Object.assign(new ApiError('Category not found', 404), {
-      errorCode: 'CATEGORY_NOT_FOUND',
-    });
-  }
-
-  const subcats = await db
-    .select()
-    .from(subcategories)
-    .where(eq(subcategories.categoryId, id))
-    .orderBy(asc(subcategories.createdAt));
-
-  return {
-    id: category.id,
-    nameEn: category.nameEn,
-    nameEs: category.nameEs,
-    categoryType: category.categoryType,
-    categoryIcon: category.categoryIcon,
-    subcategories: subcats.map((s) => ({
-      id: s.id,
-      nameEn: s.nameEn,
-      nameEs: s.nameEs,
-      subcategoryIcon: s.subcategoryIcon,
-    })),
-  };
+  return rows.map(publicCategory);
 }
 
 export async function createCategory(
   input: CategoryCreateInput,
-  actor: { userId: string },
-) {
+  actor: { employeeId: string },
+): Promise<PublicCategory> {
+  const nameEn = input.nameEn.trim();
+  const nameEs = input.nameEs.trim();
+  const categoryType = input.categoryType.trim();
+  const categoryIcon = input.categoryIcon.trim();
+  if (
+    nameEn.length === 0 ||
+    nameEs.length === 0 ||
+    categoryType.length === 0 ||
+    categoryIcon.length === 0
+  ) {
+    throw Object.assign(
+      new ApiError(
+        'nameEn, nameEs, categoryType, and categoryIcon are required',
+        400,
+      ),
+      {
+        errorCode: 'INVALID_INPUT',
+      },
+    );
+  }
+
+  if (nameEn.length > 200 || nameEs.length > 200) {
+    throw Object.assign(
+      new ApiError('Names must be 200 characters or fewer', 400),
+      { errorCode: 'INVALID_INPUT' },
+    );
+  }
+
   const id = crypto.randomUUID();
   await db.insert(categories).values({
     id,
-    ...input,
-    createdBy: actor.userId,
+    nameEn,
+    nameEs,
+    categoryType,
+    categoryIcon,
+    createdBy: actor.employeeId,
   });
 
   const [row] = await db
@@ -191,6 +146,55 @@ export async function updateCategory(id: string, patch: CategoryPatchInput) {
       { errorCode: 'INVALID_INPUT' },
     );
   }
+  const clean: CategoryPatchInput = {};
+  if (patch.nameEn !== undefined) {
+    const v = patch.nameEn.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('nameEn cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    if (v.length > 200) {
+      throw Object.assign(
+        new ApiError('nameEn must be 200 characters or fewer', 400),
+        { errorCode: 'INVALID_INPUT' },
+      );
+    }
+    clean.nameEn = v;
+  }
+  if (patch.nameEs !== undefined) {
+    const v = patch.nameEs.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('nameEs cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    if (v.length > 200) {
+      throw Object.assign(
+        new ApiError('nameEs must be 200 characters or fewer', 400),
+        { errorCode: 'INVALID_INPUT' },
+      );
+    }
+    clean.nameEs = v;
+  }
+  if (patch.categoryType !== undefined) {
+    const v = patch.categoryType.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('categoryType cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    clean.categoryType = v;
+  }
+  if (patch.categoryIcon !== undefined) {
+    const v = patch.categoryIcon.trim();
+    if (v.length === 0) {
+      throw Object.assign(new ApiError('categoryIcon cannot be empty', 400), {
+        errorCode: 'INVALID_INPUT',
+      });
+    }
+    clean.categoryIcon = v;
+  }
 
   const existing = await db
     .update(categories)
@@ -212,65 +216,16 @@ export async function updateCategory(id: string, patch: CategoryPatchInput) {
   return row;
 }
 
-export async function deleteCategory(id: string) {
-  const deleted = await db
-    .delete(categories)
+export async function deleteCategory(id: string): Promise<void> {
+  const [existing] = await db
+    .select({ id: categories.id })
+    .from(categories)
     .where(eq(categories.id, id))
-    .returning({ id: categories.id });
-  if (deleted.length === 0) {
+    .limit(1);
+  if (!existing) {
     throw Object.assign(new ApiError('Category not found', 404), {
       errorCode: 'CATEGORY_NOT_FOUND',
     });
   }
-  return { id };
-}
-
-export interface SubcategoryPatchInput {
-  nameEn?: string;
-  nameEs?: string;
-  subcategoryIcon?: string;
-}
-
-export async function updateSubcategory(
-  id: string,
-  patch: SubcategoryPatchInput,
-) {
-  if (Object.keys(patch).length === 0) {
-    throw Object.assign(
-      new ApiError('Patch must include at least one field', 400),
-      { errorCode: 'INVALID_INPUT' },
-    );
-  }
-
-  const existing = await db
-    .update(subcategories)
-    .set(patch)
-    .where(eq(subcategories.id, id))
-    .returning({ id: subcategories.id });
-
-  if (existing.length === 0) {
-    throw Object.assign(new ApiError('Subcategory not found', 404), {
-      errorCode: 'SUBCATEGORY_NOT_FOUND',
-    });
-  }
-
-  const [row] = await db
-    .select()
-    .from(subcategories)
-    .where(eq(subcategories.id, id))
-    .limit(1);
-  return row;
-}
-
-export async function deleteSubcategory(id: string) {
-  const deleted = await db
-    .delete(subcategories)
-    .where(eq(subcategories.id, id))
-    .returning({ id: subcategories.id });
-  if (deleted.length === 0) {
-    throw Object.assign(new ApiError('Subcategory not found', 404), {
-      errorCode: 'SUBCATEGORY_NOT_FOUND',
-    });
-  }
-  return { id };
+  await db.delete(categories).where(eq(categories.id, id));
 }

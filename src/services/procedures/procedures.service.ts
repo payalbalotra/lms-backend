@@ -6,8 +6,8 @@ import {
   subcategories,
   procedures,
   type ProcedureStatus,
-} from '../../db/schema.ts';
-import { logger } from '../../lib/logger.ts';
+} from '../../db/index.ts';
+import { logger } from '../../config/logger.ts';
 import {
   procedureBodySchema,
   type Block,
@@ -153,7 +153,7 @@ export async function createProcedure(
   if (input.subcategoryId !== null) {
     const [subcat] = await db
       .select({
-        id: subcategories.id,
+        id: categories.id,
       })
       .from(subcategories)
       .where(eq(subcategories.id, input.subcategoryId))
@@ -206,7 +206,7 @@ export async function createProcedure(
  *  (`'draft' | 'published'`). Returns the full public shape so the editor can
  *  re-open a draft without a second fetch. */
 export async function listProcedures(
-  filter: { status?: ProcedureStatus } = {},
+  filter: { status?: ProcedureStatus | undefined } = {},
 ): Promise<PublicProcedure[]> {
   const conditions = [];
   if (filter.status) {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { stations } from '../../db/employee.schema.ts';
+import { stations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 
 export interface PublicStation {
@@ -23,7 +23,7 @@ export interface StationCreateInput {
 }
 
 export interface StationPatchInput {
-  name?: string;
+  name?: string | undefined;
 }
 
 export async function listStations(): Promise<PublicStation[]> {
@@ -86,10 +86,9 @@ export async function updateStation(
   return publicStation(updated);
 }
 
-// Hard delete. FK references from employee_stations use onDelete: 'cascade'.
 export async function deleteStation(id: string): Promise<void> {
   const [existing] = await db
-    .select()
+    .select({ id: stations.id })
     .from(stations)
     .where(eq(stations.id, id))
     .limit(1);

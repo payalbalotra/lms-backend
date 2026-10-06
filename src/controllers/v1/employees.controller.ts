@@ -5,39 +5,16 @@ import {
   statusEnum,
   createSchema,
   idParam,
-  slugIdParam,
-  stationCreateSchema,
-  stationPatchSchema,
-  roleCreateSchema,
-  rolePatchSchema,
-  locationCreateSchema,
-  locationPatchSchema,
 } from '../../shared/validations/employees.schema.ts';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
+import { employees, locations, session } from '../../db/index.ts';
 import {
-  employees,
-  locations,
-  roles,
-  session,
-  type LanguagePref,
-} from '../../db/employee.schema.ts';
-import {
-  createInvite,
+  sendInviteMagicLink,
   createEmployeeTransaction,
 } from '../../services/employee/employee.service.ts';
-import * as stationsService from '../../services/station/stations.service.ts';
-import * as rolesService from '../../services/roles/roles.service.ts';
-import * as locationsService from '../../services/location/location.service.ts';
+
 import catchAsync from '../../shared/utils/catchAsync.ts';
-
-import config from '../../config/index.ts';
-
-const FRONTEND_BASE_URL = config.frontendBaseUrl;
-
-function buildInviteUrl(languagePref: LanguagePref, token: string): string {
-  return `${FRONTEND_BASE_URL}/${languagePref}/activate/${token}`;
-}
 
 // ============================================================================
 // Employees CRUD (existing)
@@ -59,19 +36,18 @@ export const createEmployee = catchAsync(
     }
     const input = parsed.data;
 
-    const { employee: row, invite } = await createEmployeeTransaction(
-      input,
-      admin.id,
-    );
+    const { employee: row } = await createEmployeeTransaction(input, admin.id);
+
+    // Send magic link invite email — Better Auth handles token generation.
+    const inviteUrl = await sendInviteMagicLink({
+      email: row.email,
+      languagePref: row.languagePref,
+    });
 
     res.status(201).json(
-      ApiResponse.success('Employee created successfully', {
+      ApiResponse.success('Employee created and invite sent', {
         employee: publicEmployee(row),
-        invite: {
-          url: buildInviteUrl(input.languagePref, invite.token),
-          code: invite.code,
-          expiresAt: invite.expiresAt.toISOString(),
-        },
+        inviteUrl,
       }),
     );
   },
@@ -114,20 +90,17 @@ export const resendInvite = catchAsync(
       return;
     }
 
-    const invite = await createInvite({
-      employeeId: employee.id,
-      createdBy: admin.id,
+    // Better Auth automatically invalidates the old token when a new
+    // magic link is requested for the same email (verification table
+    // entries expire; new one replaces semantics via TTL).
+    const inviteUrl = await sendInviteMagicLink({
+      email: employee.email,
+      languagePref: employee.languagePref,
     });
 
-    res.status(200).json(
-      ApiResponse.success('Invite resent successfully', {
-        invite: {
-          url: buildInviteUrl(employee.languagePref, invite.token),
-          code: invite.code,
-          expiresAt: invite.expiresAt.toISOString(),
-        },
-      }),
-    );
+    res
+      .status(200)
+      .json(ApiResponse.success('Invite resent successfully', { inviteUrl }));
   },
 );
 
@@ -254,272 +227,15 @@ export const listEmployees = catchAsync(
       .leftJoin(locations, eq(locations.id, employees.locationId))
       .where(conditions.length ? and(...conditions) : undefined);
 
-    const roleIds = [...new Set(rows.map((r) => r.employee.roleId))];
-    const roleRows = roleIds.length
-      ? await db.select().from(roles).where(inArray(roles.id, roleIds))
-      : [];
-    const roleMap = new Map(roleRows.map((r) => [r.id, r]));
-
     res.status(200).json(
       ApiResponse.success('Employees retrieved successfully', {
         employees: rows.map((r) => ({
           ...publicEmployee(r.employee),
           locationName: r.locationName,
-          roleName: roleMap.get(r.employee.roleId)?.name ?? null,
+          roleName: r.employee.role,
         })),
       }),
     );
-  },
-);
-
-// ============================================================================
-// Stations — thin handlers delegate to stationsService
-// ============================================================================
-
-// ---------- GET /api/admin/stations ----------------------------------------
-export const listStations = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const result = await stationsService.listStations();
-    res.status(200).json(
-      ApiResponse.success('Stations retrieved successfully', {
-        stations: result,
-      }),
-    );
-  },
-);
-
-// ---------- POST /api/admin/stations ---------------------------------------
-export const createStation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const parsed = stationCreateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-    const station = await stationsService.createStation({
-      ...parsed.data,
-    });
-    res
-      .status(201)
-      .json(ApiResponse.success('Station created successfully', { station }));
-  },
-);
-
-// ---------- PATCH /api/admin/stations/:id ----------------------------------
-export const updateStation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid station id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    const patch = stationPatchSchema.safeParse(req.body);
-    if (!patch.success) {
-      throw patch.error;
-    }
-    const station = await stationsService.updateStation(
-      param.data.id,
-      patch.data,
-    );
-    res
-      .status(200)
-      .json(ApiResponse.success('Station updated successfully', { station }));
-  },
-);
-
-// ---------- DELETE /api/admin/stations/:id ---------------------------------
-export const deleteStation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid station id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    await stationsService.deleteStation(param.data.id);
-    res
-      .status(200)
-      .json(ApiResponse.success('Station deleted successfully', { ok: true }));
-  },
-);
-
-// ============================================================================
-// Roles — thin handlers delegate to rolesService
-// ============================================================================
-
-// ---------- GET /api/admin/roles -------------------------------------------
-export const listRoles = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const result = await rolesService.listRoles();
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Roles retrieved successfully', { roles: result }),
-      );
-  },
-);
-
-// ---------- POST /api/admin/roles ------------------------------------------
-export const createRole = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const parsed = roleCreateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-    const role = await rolesService.createRole(parsed.data);
-    res
-      .status(201)
-      .json(ApiResponse.success('Role created successfully', { role }));
-  },
-);
-
-// ---------- PATCH /api/admin/roles/:id -------------------------------------
-export const updateRole = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid role id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    const patch = rolePatchSchema.safeParse(req.body);
-    if (!patch.success) {
-      throw patch.error;
-    }
-    const role = await rolesService.updateRole(param.data.id, patch.data);
-    res
-      .status(200)
-      .json(ApiResponse.success('Role updated successfully', { role }));
-  },
-);
-
-// ---------- DELETE /api/admin/roles/:id ------------------------------------
-export const deleteRole = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid role id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    await rolesService.deleteRole(param.data.id);
-    res
-      .status(200)
-      .json(ApiResponse.success('Role deleted successfully', { ok: true }));
-  },
-);
-
-// ============================================================================
-// Locations — thin handlers delegate to locationsService
-// ============================================================================
-
-// ---------- GET /api/admin/locations ---------------------------------------
-export const listLocations = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const result = await locationsService.listLocations();
-    res.status(200).json(
-      ApiResponse.success('Locations retrieved successfully', {
-        locations: result,
-      }),
-    );
-  },
-);
-
-// ---------- POST /api/admin/locations --------------------------------------
-export const createLocation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const parsed = locationCreateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-    const location = await locationsService.createLocation(parsed.data);
-    res
-      .status(201)
-      .json(ApiResponse.success('Location created successfully', { location }));
-  },
-);
-
-// ---------- PATCH /api/admin/locations/:id ---------------------------------
-export const updateLocation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid location id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    const patch = locationPatchSchema.safeParse(req.body);
-    if (!patch.success) {
-      throw patch.error;
-    }
-    const location = await locationsService.updateLocation(
-      param.data.id,
-      patch.data,
-    );
-    res
-      .status(200)
-      .json(ApiResponse.success('Location updated successfully', { location }));
-  },
-);
-
-// ---------- DELETE /api/admin/locations/:id --------------------------------
-export const deleteLocation = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-    const param = slugIdParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid location id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-    await locationsService.deleteLocation(param.data.id);
-    res
-      .status(200)
-      .json(ApiResponse.success('Location deleted successfully', { ok: true }));
   },
 );
 
@@ -533,7 +249,7 @@ function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
     name: e.name,
     employeeCode: e.employeeCode,
     locationId: e.locationId,
-    roleId: e.roleId,
+    role: e.role,
     jobIds: e.jobIds,
     stationIds: e.stationIds,
     languagePref: e.languagePref,

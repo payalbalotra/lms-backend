@@ -5,7 +5,7 @@ import {
   presignDocumentUpload,
   deleteUploadedAsset,
 } from '../../controllers/v1/uploads.controller.ts';
-import { requireAuth } from '../../auth/middleware.ts';
+import { requireAuth } from '../../config/middleware.ts';
 import { requireAdmin } from '../../shared/middleware/requireAdmin.middleware.ts';
 
 const uploadsRoute: Router = express.Router();
