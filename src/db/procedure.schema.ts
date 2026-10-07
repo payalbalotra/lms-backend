@@ -25,7 +25,7 @@ export const procedures = pgTable(
     purposeEs: text('purpose_es').notNull(),
     // FK to categories.id; SET NULL on category archive keeps the procedure
     // reachable (the reader renders "â€”" instead of the category pill).
-    categoryId: text('category_id').references(() => categories.id, {
+    categoryId: uuid('category_id').references(() => categories.id, {
       onDelete: 'set null',
     }),
     status: text('status').$type<ProcedureStatus>().notNull().default('draft'),

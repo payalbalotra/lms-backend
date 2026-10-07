@@ -13,8 +13,6 @@ export * from './auth.schema.ts';
 
 import { user } from './auth.schema.ts';
 import { locations } from './locations.schema.ts';
-import { jobs } from './jobs.schema.ts';
-import { stations } from './stations.schema.ts';
 
 // ============================================================================
 // Role enum — defined here, shared across employees and jobs
@@ -72,48 +70,10 @@ export const employees = pgTable(
     deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
   },
   (t) => ({
-    nameLocationUnique: uniqueIndex('employees_name_location_uniq').on(
-      t.locationId,
-      drizzleSql`lower(${t.name})`,
-    ),
     codeUnique: uniqueIndex('employees_code_uniq')
       .on(t.employeeCode)
       .where(drizzleSql`${t.employeeCode} IS NOT NULL`),
     userIdUnique: uniqueIndex('employees_user_id_uniq').on(t.userId),
-  }),
-);
-
-// ============================================================================
-// Employee Junction Tables (Jobs, Stations)
-// ============================================================================
-
-export const employeeJobs = pgTable(
-  'employee_jobs',
-  {
-    employeeId: uuid('employee_id')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'cascade' }),
-    jobId: uuid('job_id')
-      .notNull()
-      .references(() => jobs.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: uniqueIndex('employee_jobs_pk').on(t.employeeId, t.jobId),
-  }),
-);
-
-export const employeeStations = pgTable(
-  'employee_stations',
-  {
-    employeeId: uuid('employee_id')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'cascade' }),
-    stationId: uuid('station_id')
-      .notNull()
-      .references(() => stations.id, { onDelete: 'cascade' }),
-  },
-  (t) => ({
-    pk: uniqueIndex('employee_stations_pk').on(t.employeeId, t.stationId),
   }),
 );
 
@@ -123,11 +83,6 @@ export const employeeStations = pgTable(
 
 export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;
-
-export type EmployeeJob = typeof employeeJobs.$inferSelect;
-export type NewEmployeeJob = typeof employeeJobs.$inferInsert;
-export type EmployeeStation = typeof employeeStations.$inferSelect;
-export type NewEmployeeStation = typeof employeeStations.$inferInsert;
 
 // Re-export auth schema so consumers only need to import from this file
 export * from './auth.schema.ts';

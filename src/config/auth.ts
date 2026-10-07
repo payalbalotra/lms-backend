@@ -15,7 +15,6 @@ import { eq } from 'drizzle-orm';
 import { resend } from '../shared/utils/ResendClient.ts';
 import {
   getInviteEmailTemplate,
-  getResetPasswordEmailTemplate,
   getAuthEmailAndResetPasswordTemplate,
 } from '../shared/utils/emailTemplates.ts';
 
@@ -130,40 +129,6 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     minPasswordLength: 8,
     autoSignIn: false, // we sign in explicitly from the activate controller
-    sendPasswordResetEmail: async ({
-      user,
-      token,
-    }: {
-      user: { email: string; name: string };
-      token: string;
-      url?: string;
-      request?: Request;
-    }) => {
-      // Find employee to get their language pref if needed, defaulting to 'en'
-      const [emp] = await db
-        .select({ languagePref: employees.languagePref })
-        .from(employees)
-        .where(eq(employees.email, user.email))
-        .limit(1);
-
-      const lang = emp?.languagePref || 'en';
-      const resetUrl = `${config.frontendBaseUrl}/${lang}/reset-password?token=${token}`;
-
-      console.log(`[DEBUG - RESET LINK]: ${resetUrl}`);
-
-      try {
-        const html = getResetPasswordEmailTemplate(user.name, resetUrl);
-        await resend.emails.send({
-          from: 'Almentria Mexicana <mihpros@mail.logiccloud.in>',
-          to: user.email,
-          subject: 'Reset Your Password',
-          html,
-        });
-        console.log(`[RESET LINK] Email sent to ${user.email}`);
-      } catch (error) {
-        console.error('[RESET LINK] Failed to send email via Resend:', error);
-      }
-    },
   },
 
   // 3. Session shape — kept conservative. Sliding refresh, no cookie cache:

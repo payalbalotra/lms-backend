@@ -1,8 +1,8 @@
 import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { employees } from './index.ts';
+import { user } from './auth.schema.ts';
 
 export const categories = pgTable('categories', {
-  id: text('id').primaryKey(),
+  id: uuid('id').defaultRandom().primaryKey(),
   nameEn: text('name_en').notNull(),
   nameEs: text('name_es').notNull(),
   categoryType: text('category_type').notNull(),
@@ -11,9 +11,9 @@ export const categories = pgTable('categories', {
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
-  createdBy: uuid('created_by')
+  createdBy: text('created_by')
     .notNull()
-    .references(() => employees.id, { onDelete: 'restrict' }),
+    .references(() => user.id, { onDelete: 'restrict' }),
 });
 
 export type Category = typeof categories.$inferSelect;

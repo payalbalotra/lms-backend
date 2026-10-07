@@ -6,7 +6,7 @@ import {
   getProcedure,
 } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
-import { requireAdmin } from '../../shared/middleware/requireAdmin.middleware.ts';
+import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 const proceduresRoute: Router = express.Router();
@@ -18,7 +18,7 @@ proceduresRoute.get('/:slug', requireAuth, getProcedure);
 proceduresRoute.post(
   '/',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 20,
     message: 'Too many procedures created, please try again later.',
@@ -26,12 +26,17 @@ proceduresRoute.post(
   createProcedure,
 );
 
-proceduresRoute.get('/', requireAuth, requireAdmin, listProcedures);
+proceduresRoute.get(
+  '/',
+  requireAuth,
+  requireRoles(['super_admin']),
+  listProcedures,
+);
 
 proceduresRoute.post(
   '/import',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 10,
     message: 'Too many procedure imports, please try again later.',

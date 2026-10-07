@@ -6,7 +6,7 @@ import {
   deleteCategory,
 } from '../../controllers/v1/categories.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
-import { requireAdmin } from '../../shared/middleware/requireAdmin.middleware.ts';
+import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 
 import {
   listSubcategoriesAdmin,
@@ -26,7 +26,7 @@ categoriesRoute.get('/', requireAuth, listCategories);
 categoriesRoute.post(
   '/',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 20,
     message: 'Too many categories created, please try again later.',
@@ -36,7 +36,7 @@ categoriesRoute.post(
 categoriesRoute.patch(
   '/:id',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 30,
     message: 'Too many category updates, please try again later.',
@@ -46,7 +46,7 @@ categoriesRoute.patch(
 categoriesRoute.delete(
   '/:id',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 20,
     message: 'Too many category deletions, please try again later.',
@@ -63,7 +63,7 @@ categoriesRoute.get(
 categoriesRoute.post(
   '/:categoryId/subcategories',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 20,
     message: 'Too many subcategories created, please try again later.',
@@ -73,7 +73,7 @@ categoriesRoute.post(
 categoriesRoute.patch(
   '/:categoryId/subcategories/:id',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 30,
     message: 'Too many subcategory updates, please try again later.',
@@ -83,7 +83,7 @@ categoriesRoute.patch(
 categoriesRoute.delete(
   '/:categoryId/subcategories/:id',
   requireAuth,
-  requireAdmin,
+  requireRoles(['super_admin']),
   createLimiter({
     limit: 20,
     message: 'Too many subcategory deletions, please try again later.',

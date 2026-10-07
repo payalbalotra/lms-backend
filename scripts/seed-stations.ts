@@ -38,11 +38,14 @@ async function seedStations() {
     }
 
     if (jobId && stationId) {
-      const existingLink =
-        await sql`SELECT job_id FROM job_stations WHERE job_id = ${jobId} AND station_id = ${stationId}`;
-      if (existingLink.length === 0) {
-        await sql`INSERT INTO job_stations (job_id, station_id) VALUES (${jobId}, ${stationId})`;
-      }
+      // Postgres array append: station_ids = array_append(station_ids, stationId)
+      // but only if it's not already in the array to avoid duplicates
+      await sql`
+        UPDATE jobs 
+        SET station_ids = array_append(station_ids, ${stationId})
+        WHERE id = ${jobId} 
+        AND NOT (${stationId} = ANY(station_ids))
+      `;
     }
   }
   console.log('Stations seeded successfully.');

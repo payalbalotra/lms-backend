@@ -1,5 +1,5 @@
-import { eq, sql, inArray } from 'drizzle-orm';
-import { db, type Tx } from '../../db/client.ts';
+import { eq, inArray } from 'drizzle-orm';
+import { db } from '../../db/client.ts';
 import { employees } from '../../db/index.ts';
 import { locations, stations, jobs } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
@@ -12,37 +12,7 @@ export function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').normalize('NFC');
 }
 
-export async function uniqueEmployeeName(
-  baseName: string,
-  tx?: Tx,
-): Promise<string> {
-  const client = tx || db;
-  const normalized = normalizeName(baseName);
-  const lower = normalized.toLowerCase();
-
-  const exact = await client
-    .select({ name: employees.name })
-    .from(employees)
-    .where(sql`lower(${employees.name}) = ${lower}`)
-    .limit(1);
-
-  if (exact.length === 0) return normalized;
-
-  let n = 2;
-  while (true) {
-    const candidate = `${normalized} ${n}`;
-    const exists = await client
-      .select({ name: employees.name })
-      .from(employees)
-      .where(sql`lower(${employees.name}) = ${candidate.toLowerCase()}`)
-      .limit(1);
-    if (exists.length === 0) return candidate;
-    n += 1;
-    if (n > 9999) {
-      throw new Error(`Could not find a free name suffix for "${baseName}"`);
-    }
-  }
-}
+// Removed uniqueEmployeeName as per user request
 
 // ============================================================================
 // Magic link invite
@@ -157,7 +127,7 @@ export async function createEmployeeTransaction(
         code: 'EMAIL_TAKEN',
       });
 
-    const employeeName = await uniqueEmployeeName(input.name, tx);
+    const employeeName = normalizeName(input.name);
     const employeeId = crypto.randomUUID();
     await tx.insert(employees).values({
       id: employeeId,

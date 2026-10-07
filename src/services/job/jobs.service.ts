@@ -1,13 +1,14 @@
 import crypto from 'node:crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { jobs, jobStations, stations, employeeJobs } from '../../db/index.ts';
+import { jobs, stations, employees } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 
 export interface PublicJob {
   id: string;
   name: string;
   createdAt: string;
+  stationIds?: string[];
 }
 
 export function publicJob(r: Readonly<typeof jobs.$inferSelect>): PublicJob {
@@ -15,20 +16,23 @@ export function publicJob(r: Readonly<typeof jobs.$inferSelect>): PublicJob {
     id: r.id,
     name: r.name,
     createdAt: r.createdAt.toISOString(),
+    stationIds: r.stationIds || [],
   };
 }
 
 export interface JobCreateInput {
   name: string;
+  stationIds?: string[];
 }
 
 export interface JobPatchInput {
   name?: string | undefined;
+  stationIds?: string[] | undefined;
 }
 
 export async function listJobs(): Promise<PublicJob[]> {
   const rows = await db.select().from(jobs);
-  return rows.map(publicJob);
+  return rows.map((r) => publicJob(r));
 }
 
 // ---------------------------------------------------------------------------
@@ -45,35 +49,40 @@ export interface PublicJobWithStations extends PublicJob {
 export async function listJobsWithStations(): Promise<PublicJobWithStations[]> {
   // 1. Fetch jobs
   const jobRows = await db.select().from(jobs);
-
   if (jobRows.length === 0) return [];
 
-  // 2. Fetch all job_station links for those jobs in one query
-  const jobIds = jobRows.map((j) => j.id);
-  const links = await db
-    .select({
-      jobId: jobStations.jobId,
-      stationId: jobStations.stationId,
-      stationName: stations.name,
-    })
-    .from(jobStations)
-    .innerJoin(stations, eq(stations.id, jobStations.stationId))
-    .where(inArray(jobStations.jobId, jobIds));
-
-  // 3. Group stations per job
-  const stationsByJob = new Map<string, Array<{ id: string; name: string }>>();
-  for (const link of links) {
-    const list = stationsByJob.get(link.jobId) ?? [];
-    list.push({ id: link.stationId, name: link.stationName });
-    stationsByJob.set(link.jobId, list);
+  // 2. Fetch all unique stations referenced by jobs
+  const allStationIds = new Set<string>();
+  for (const j of jobRows) {
+    for (const sId of j.stationIds || []) {
+      allStationIds.add(sId);
+    }
   }
 
-  return jobRows.map((j) => ({
-    id: j.id,
-    name: j.name,
-    createdAt: j.createdAt.toISOString(),
-    stations: stationsByJob.get(j.id) ?? [],
-  }));
+  const stationsMap = new Map<string, { id: string; name: string }>();
+  if (allStationIds.size > 0) {
+    const sRows = await db
+      .select({ id: stations.id, name: stations.name })
+      .from(stations)
+      .where(inArray(stations.id, Array.from(allStationIds)));
+    for (const s of sRows) {
+      stationsMap.set(s.id, s);
+    }
+  }
+
+  return jobRows.map((j) => {
+    const jobStations = (j.stationIds || [])
+      .map((id) => stationsMap.get(id))
+      .filter((s): s is { id: string; name: string } => s !== undefined);
+
+    return {
+      id: j.id,
+      name: j.name,
+      createdAt: j.createdAt.toISOString(),
+      stationIds: j.stationIds || [],
+      stations: jobStations,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -88,39 +97,43 @@ export async function getJobStations(
 ): Promise<Array<{ id: string; name: string }>> {
   if (jobIds.length === 0) return [];
 
-  // Fetch linked stations.
-  const rows = await db
-    .select({ id: stations.id, name: stations.name })
-    .from(jobStations)
-    .innerJoin(stations, eq(stations.id, jobStations.stationId))
-    .where(inArray(jobStations.jobId, jobIds));
+  const jobRows = await db
+    .select({ stationIds: jobs.stationIds })
+    .from(jobs)
+    .where(inArray(jobs.id, jobIds));
 
-  // Deduplicate stations in case multiple jobs share the same station
-  const uniqueMap = new Map<string, { id: string; name: string }>();
-  for (const row of rows) {
-    if (!uniqueMap.has(row.id)) {
-      uniqueMap.set(row.id, row);
+  const allStationIds = new Set<string>();
+  for (const j of jobRows) {
+    for (const sId of j.stationIds || []) {
+      allStationIds.add(sId);
     }
   }
 
-  return Array.from(uniqueMap.values());
+  if (allStationIds.size === 0) return [];
+
+  const sRows = await db
+    .select({ id: stations.id, name: stations.name })
+    .from(stations)
+    .where(inArray(stations.id, Array.from(allStationIds)));
+
+  return sRows;
 }
 
 export async function createJob(input: JobCreateInput): Promise<PublicJob> {
-  // Jobs don't have a separate "id" UI field — backend generates a UUID so
-  // the admin only has to type the display name. Existing seeded rows keep
-  // their slug ids for backward compatibility with employees.role_id FKs.
   const id = crypto.randomUUID();
   await db.insert(jobs).values({
     id,
     name: input.name,
+    stationIds: input.stationIds || [],
   });
+
   const [row] = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
   if (!row) {
     throw Object.assign(new ApiError('Inserted role not found', 500), {
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
   return publicJob(row);
 }
 
@@ -144,7 +157,14 @@ export async function updateJob(
       errorCode: 'ROLE_NOT_FOUND',
     });
   }
-  await db.update(jobs).set(patch).where(eq(jobs.id, id));
+
+  const updatePayload: Partial<JobPatchInput> = {};
+  if (patch.name !== undefined) updatePayload.name = patch.name;
+  if (patch.stationIds !== undefined)
+    updatePayload.stationIds = patch.stationIds;
+
+  await db.update(jobs).set(updatePayload).where(eq(jobs.id, id));
+
   const [updated] = await db
     .select()
     .from(jobs)
@@ -155,12 +175,10 @@ export async function updateJob(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
   return publicJob(updated);
 }
 
-// Hard delete — refused when any employee still references the role.
-// employees.role_id has ON DELETE restrict, so the DB would also refuse; we
-// surface a friendly 409 instead of a raw FK violation.
 export async function deleteJob(id: string): Promise<void> {
   const [existing] = await db
     .select({ id: jobs.id })
@@ -174,8 +192,8 @@ export async function deleteJob(id: string): Promise<void> {
   }
   const refs = await db
     .select({ c: sql<number>`count(*)::int` })
-    .from(employeeJobs)
-    .where(eq(employeeJobs.jobId, id));
+    .from(employees)
+    .where(sql`${id} = ANY(${employees.jobIds})`);
   const refCount = refs[0]?.c ?? 0;
   if (refCount > 0) {
     throw Object.assign(
