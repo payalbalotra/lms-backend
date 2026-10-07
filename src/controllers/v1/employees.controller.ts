@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import {
   statusEnum,
   createSchema,
+  patchSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
 import { and, eq } from 'drizzle-orm';
@@ -239,6 +240,95 @@ export const listEmployees = catchAsync(
   },
 );
 
+// ---------- GET /api/admin/employees/:id -----------------------------------
+export const getEmployee = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const param = idParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid employee id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.id, param.data.id))
+      .limit(1);
+
+    if (!employee) {
+      throw new ApiError('Employee not found', 404, true, '', {
+        code: 'EMPLOYEE_NOT_FOUND',
+      });
+    }
+
+    res.status(200).json(
+      ApiResponse.success('Employee retrieved successfully', {
+        employee: publicEmployee(employee),
+      }),
+    );
+  },
+);
+
+// ---------- PATCH /api/admin/employees/:id ---------------------------------
+export const updateEmployee = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const admin = req.employee;
+    if (!admin) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const param = idParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid employee id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const updates = parsed.data;
+
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({
+        error: { code: 'NO_UPDATES', message: 'No fields provided to update.' },
+      });
+      return;
+    }
+
+    const [existing] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.id, param.data.id))
+      .limit(1);
+
+    if (!existing) {
+      throw new ApiError('Employee not found', 404, true, '', {
+        code: 'EMPLOYEE_NOT_FOUND',
+      });
+    }
+
+    const [updated] = await db
+      .update(employees)
+      .set({
+        ...updates,
+      })
+      .where(eq(employees.id, existing.id))
+      .returning();
+
+    res.status(200).json(
+      ApiResponse.success('Employee updated successfully', {
+        employee: publicEmployee(updated!),
+      }),
+    );
+  },
+);
+
 // ============================================================================
 // Shared helpers
 // ============================================================================
@@ -247,6 +337,7 @@ export function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
   return {
     id: e.id,
     name: e.name,
+    email: e.email,
     employeeCode: e.employeeCode,
     locationId: e.locationId,
     role: e.role,

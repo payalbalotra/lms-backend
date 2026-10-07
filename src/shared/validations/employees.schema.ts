@@ -20,6 +20,8 @@ export const createSchema = z.object({
   languagePref: z.enum(['en', 'es']).optional().default('en'),
 });
 
+export const patchSchema = createSchema.partial();
+
 export const idParam = z.object({ id: z.string().uuid() });
 
 // Slug ids for stations / roles / locations — lowercase, digits, dashes, 1-64 chars.
@@ -44,7 +46,9 @@ export const locationPatchSchema = z.object({
 
 export const jobCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
+  stationIds: z.array(z.string().uuid()).optional().default([]),
 });
 export const jobPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
+  stationIds: z.array(z.string().uuid()).optional(),
 });

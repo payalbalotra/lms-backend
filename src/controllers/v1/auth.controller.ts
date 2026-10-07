@@ -180,9 +180,21 @@ export const setPassword = catchAsync(
       // Hash password and upsert into Better Auth's account table.
       // This is the same bcrypt format Better Auth uses for credential accounts.
       const passwordHash = await bcrypt.hash(password, 10);
-      await db
-        .insert(account)
-        .values({
+      const [existingAccount] = await db
+        .select({ id: account.id })
+        .from(account)
+        .where(
+          and(eq(account.userId, userId), eq(account.providerId, 'credential')),
+        )
+        .limit(1);
+
+      if (existingAccount) {
+        await db
+          .update(account)
+          .set({ password: passwordHash, updatedAt: new Date() })
+          .where(eq(account.id, existingAccount.id));
+      } else {
+        await db.insert(account).values({
           id: crypto.randomUUID(),
           accountId: userId,
           providerId: 'credential',
@@ -190,11 +202,8 @@ export const setPassword = catchAsync(
           password: passwordHash,
           createdAt: new Date(),
           updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: [account.userId, account.providerId],
-          set: { password: passwordHash, updatedAt: new Date() },
         });
+      }
 
       await db.transaction(async (tx) => {
         await tx
