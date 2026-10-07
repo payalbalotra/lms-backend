@@ -62,6 +62,7 @@ export async function createSubcategory(
     nameEn: input.nameEn,
     nameEs: input.nameEs,
     createdBy: actor.employeeId,
+    subcategoryIcon: '',
   });
 
   const [row] = await db
