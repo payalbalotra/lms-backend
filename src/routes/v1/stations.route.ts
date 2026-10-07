@@ -1,11 +1,11 @@
 import express, { type Router } from 'express';
 import * as stationsController from '../../controllers/v1/stations.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
-import { requireAdmin } from '../../shared/middleware/requireAdmin.middleware.ts';
+import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 const stationsRoute: Router = express.Router();
-stationsRoute.use(requireAuth, requireAdmin);
+stationsRoute.use(requireAuth, requireRoles(['super_admin']));
 
 stationsRoute.get('/', stationsController.listStations);
 
