@@ -53,15 +53,21 @@ export async function requireAuth(
 
   if (!employee) {
     console.log(
-      `[Auth Debug] No employee record found. Bypassing as Super Admin.`,
+      `[Auth Debug] No employee record found for userId=${userId}. Super Admin bypass active — write operations that require a real employee UUID will be blocked.`,
     );
     req.session = {
       id: sessionId,
       employeeId: 'super-admin',
     };
     req.isSuperAdmin = true;
+    // IMPORTANT: do NOT use userId here — it is a better-auth nanoid (text),
+    // not a uuid. Using it as req.employee.id would corrupt any uuid FK column
+    // (e.g. procedures.created_by). Set id to empty string so callers that
+    // attempt to write it to the DB get a clear validation error rather than a
+    // cryptic postgres "invalid input syntax for type uuid" 500.
     req.employee = {
-      id: userId,
+      id: '',
+      userId: userId,
       locationId: 'global',
       role: 'super_admin',
     };

@@ -8,6 +8,7 @@ import type { Role } from '../db/employee.schema.ts';
  */
 export interface AuthedEmployee {
   id: string;
+  userId?: string | undefined;
   name: string;
   locationId: string;
   role: Role;
@@ -28,7 +29,7 @@ declare global {
        */
       employee?: Partial<AuthedEmployee> & {
         id: string;
-        userId?: string;
+        userId?: string | undefined;
         locationId: string;
         role: Role | 'super_admin';
       };
