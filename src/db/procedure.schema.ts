@@ -8,8 +8,11 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
-import { categories } from './categories.schema.ts';
-import { employees } from './index.ts';
+import { subcategories } from './subcategories.schema.ts';
+import { quiz } from './quiz.schema.ts';
+import { stations } from './stations.schema.ts';
+
+import { user } from './auth.schema.ts';
 
 export const procedureStatuses = ['draft', 'published'] as const;
 export type ProcedureStatus = (typeof procedureStatuses)[number];
@@ -17,23 +20,31 @@ export type ProcedureStatus = (typeof procedureStatuses)[number];
 export const procedures = pgTable(
   'procedures',
   {
-    id: text('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     slug: text('slug').notNull(),
     titleEn: text('title_en').notNull(),
     titleEs: text('title_es').notNull(),
     purposeEn: text('purpose_en').notNull(),
     purposeEs: text('purpose_es').notNull(),
-    // FK to categories.id; SET NULL on category archive keeps the procedure
-    // reachable (the reader renders "â€”" instead of the category pill).
-    categoryId: uuid('category_id').references(() => categories.id, {
+    // FK to subcategories.id; SET NULL on subcategory archive keeps the procedure
+    // reachable (the reader renders "â€”" instead of the subcategory pill).
+    subcategoryId: uuid('subcategory_id').references(() => subcategories.id, {
       onDelete: 'set null',
     }),
+    stationId: uuid('station_id').references(() => stations.id, {
+      onDelete: 'set null',
+    }),
+    quizId: uuid('quiz_id').references(() => quiz.id, {
+      onDelete: 'set null',
+    }),
+    procedureImage: text('procedure_image'),
+    assignUsers: uuid('assign_users').array(),
     status: text('status').$type<ProcedureStatus>().notNull().default('draft'),
     blocksEn: jsonb('blocks_en').$type<unknown>().notNull(),
     blocksEs: jsonb('blocks_es').$type<unknown>().notNull(),
-    createdBy: uuid('created_by')
-      .notNull()
-      .references(() => employees.id, { onDelete: 'restrict' }),
+    createdBy: text('created_by').references(() => user.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -43,7 +54,9 @@ export const procedures = pgTable(
   },
   (t) => ({
     slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
-    byCategory: index('procedures_category_idx').on(t.categoryId),
+    bySubcategory: index('procedures_subcategory_idx').on(t.subcategoryId),
+    byStation: index('procedures_station_idx').on(t.stationId),
+    byQuiz: index('procedures_quiz_idx').on(t.quizId),
     byStatus: index('procedures_status_idx').on(t.status),
   }),
 );
@@ -113,10 +126,27 @@ const stepBodySchema = z.preprocess(
 // A single step inside a method or recipe block.
 const methodStepSchema = z.object({
   id: z.string().min(1),
+  phase: localisedStringOptional.optional(),
   body: stepBodySchema,
   critical: z.boolean().optional(),
   criticalLimit: criticalLimitSchema.optional(),
   videoSegment: videoSegmentSchema.optional(),
+  timer: z.object({ seconds: z.number(), label: z.string() }).optional(),
+  images: z
+    .array(
+      z.object({
+        src: z.string(),
+        alt: localisedStringOptional,
+        caption: localisedStringOptional.optional(),
+      }),
+    )
+    .optional(),
+  discardAt: z.boolean().optional(),
+  discardAtHours: z.number().optional(),
+  compareImages: z.boolean().optional(),
+  note: z.object({ severity: z.string(), body: localisedString }).optional(),
+  videoSrc: z.string().optional(),
+  videoCaption: z.string().optional(),
 });
 export type MethodStepInput = z.infer<typeof methodStepSchema>;
 
@@ -131,6 +161,7 @@ export const yieldItemSchema = z.object({
   label: z.string().min(1),
   value: z.string().min(1),
   unit: z.string().optional(),
+  scales: z.boolean().optional(),
 });
 
 export const ingredientSchema = z.object({
@@ -182,9 +213,9 @@ const recipeBlockSchema = z.object({
 const imageBlockSchema = z.object({
   id: z.string().min(1),
   kind: z.literal('image'),
-  src: z.string().url(),
+  src: z.string().min(1),
   alt: localisedString,
-  caption: localisedStringOptional,
+  caption: localisedStringOptional.optional(),
   hint: z.enum(['photo', 'diagram']).default('photo'),
 });
 
@@ -217,6 +248,28 @@ const tableBlockSchema = z.object({
   rows: z.array(z.array(localisedString)),
 });
 
+const ingredientsBlockSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal('ingredients'),
+  audience: z.string().optional(),
+  allergen: allergenSchema.optional(),
+  yieldItems: z.array(yieldItemSchema).optional(),
+  factors: z.array(z.number().int().positive()).optional(),
+  ingredients: z.array(ingredientSchema).optional(),
+});
+
+const checklistBlockSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal('checklist'),
+  title: localisedString,
+  items: z.array(
+    z.object({
+      id: z.string(),
+      text: localisedString,
+    }),
+  ),
+});
+
 export const blockSchema = z.discriminatedUnion('kind', [
   textBlockSchema,
   headingBlockSchema,
@@ -227,6 +280,8 @@ export const blockSchema = z.discriminatedUnion('kind', [
   warningBlockSchema,
   attachmentBlockSchema,
   tableBlockSchema,
+  ingredientsBlockSchema,
+  checklistBlockSchema,
 ]);
 export type Block = z.infer<typeof blockSchema>;
 export type BlockKind = Block['kind'];
@@ -245,10 +300,14 @@ export const createProcedureInputSchema = z.object({
   titleEs: z.string().min(1).max(200),
   purposeEn: z.string().min(1),
   purposeEs: z.string().min(1),
-  // UUID of the joined category from the categories table. Nullable â€”
-  // the procedure is allowed to live without a category (e.g. right after
-  // a category is archived and before the manager re-assigns it).
-  categoryId: z.string().uuid().nullable(),
+  // UUID of the joined subcategory from the subcategories table. Nullable â€”
+  // the procedure is allowed to live without a subcategory (e.g. right after
+  // a subcategory is archived and before the manager re-assigns it).
+  subcategoryId: z.string().uuid().nullable().optional(),
+  stationId: z.string().uuid().nullable().optional(),
+  quizId: z.string().uuid().nullable().optional(),
+  procedureImage: z.string().url().nullable().optional(),
+  assignUsers: z.array(z.string().uuid()).optional(),
   status: z.enum(['draft', 'published']).default('draft'),
   bodyEn: procedureBodySchema,
   bodyEs: procedureBodySchema,

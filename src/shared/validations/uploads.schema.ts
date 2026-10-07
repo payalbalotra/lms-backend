@@ -5,7 +5,3 @@ export const presignInputSchema = z.object({
   contentType: z.string().min(1).max(127),
   size: z.number().int().positive(),
 });
-
-export const deleteInputSchema = z.object({
-  url: z.string().url(),
-});

@@ -22,6 +22,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
     if (req.isSuperAdmin) {
       req.employee = {
         id: req.employee?.id ?? req.session.employeeId,
+        userId: req.employee?.userId ?? undefined,
         name: 'Super Admin',
         locationId: 'global',
         role: 'super_admin',
@@ -46,6 +47,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
     const [row] = await db
       .select({
         id: employees.id,
+        userId: employees.userId,
         name: employees.name,
         locationId: employees.locationId,
         role: employees.role,
@@ -86,6 +88,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
 
     const safe: AuthedEmployee = {
       id: row.id,
+      userId: row.userId ?? undefined,
       name: row.name,
       locationId: row.locationId,
       role: row.role,

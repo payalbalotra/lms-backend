@@ -1,9 +1,9 @@
 import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import type { Request, Response } from 'express';
-import { importInputSchema } from '../../shared/validations/procedures.schema.ts';
+
 import * as proceduresService from '../../services/procedures/procedures.service.ts';
-import { extractProcedureFromDocument } from '../../services/procedureExtract/procedureExtract.service.ts';
+
 import {
   procedureStatuses,
   type ProcedureStatus,
@@ -31,6 +31,7 @@ export const createProcedure = catchAsync(
 
     const procedure = await proceduresService.createProcedure(parsed.data, {
       employeeId: req.employee.id,
+      userId: req.employee.userId,
     });
     res
       .status(201)
@@ -105,33 +106,6 @@ export const getProcedure = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Procedure retrieved successfully', { procedure }),
-      );
-  },
-);
-
-// ============================================================================
-// AI Import
-// ============================================================================
-
-// POST /api/admin/library/import
-export const importProcedure = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
-    const parsed = importInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-
-    const extraction = await extractProcedureFromDocument(parsed.data);
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Procedure imported successfully', { extraction }),
       );
   },
 );
