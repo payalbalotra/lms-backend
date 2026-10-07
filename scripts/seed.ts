@@ -27,7 +27,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../src/db/client.js';
 import { user } from '../src/db/index.js';
 import { auth } from '../src/config/auth.js';
-import { uniqueEmployeeName } from '../src/services/employee/employee.service.ts';
+
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import path from 'node:path';
@@ -85,8 +85,7 @@ async function ensureMasterEmployee(): Promise<string> {
     return otherMaster.id;
   }
 
-  // Pick a unique name within the location (handles name-collision suffixing).
-  const name = await uniqueEmployeeName(MASTER_NAME);
+  const name = MASTER_NAME;
 
   await db.insert(employees).values({
     id: MASTER_EMPLOYEE_ID,

@@ -1,7 +1,6 @@
 import express, { type Express, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import { appendFileSync } from 'node:fs';
 import { toNodeHandler } from 'better-auth/node';
 import { sql } from './db/client.ts';
 import { logger } from './config/logger.ts';
@@ -21,9 +20,6 @@ const app: Express = express();
 //  Request Logging
 // -------------------------
 app.use(requestId);
-
-const REQUEST_LOG_FILE = 'backend.log';
-
 function formatTimestamp(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return (
@@ -43,11 +39,6 @@ app.use((req: Request, res: Response, next) => {
       `${formatTimestamp(new Date())} ${level} ` +
       `${req.method} ${url} -> ${code} (${ms}ms)`;
     console.log(line);
-    try {
-      appendFileSync(REQUEST_LOG_FILE, `${line}\n`);
-    } catch {
-      /* never throw from logging */
-    }
   });
   next();
 });

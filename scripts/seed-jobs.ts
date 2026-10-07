@@ -16,10 +16,9 @@ async function seedJobs() {
     const existing = await sql`SELECT id FROM jobs WHERE name = ${job.name}`;
     if (existing.length === 0) {
       const newId = crypto.randomUUID();
-      await sql`INSERT INTO jobs (id, name, role) VALUES (${newId}, ${job.name}, ${job.role})`;
-    } else {
-      await sql`UPDATE jobs SET role = ${job.role} WHERE name = ${job.name}`;
+      await sql`INSERT INTO jobs (id, name) VALUES (${newId}, ${job.name})`;
     }
+    // No UPDATE needed since we only care about name which is the lookup key
   }
 
   // Delete jobs not in the list

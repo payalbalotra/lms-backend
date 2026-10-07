@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { db, closeDb } from '../src/db/client.js';
 import { categories, subcategories } from '../src/db/index.js';
 
-const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'; // Super Admin User ID
+const SYSTEM_USER_ID = 'Fia2LLwNINbkqVCBAEidfZNNmkQpYMiC'; // Super Admin User ID
 
 async function seedCategories() {
   console.log('Seeding categories and subcategories...');
@@ -21,7 +21,11 @@ async function seedCategories() {
       nameEs: 'Inducción',
       categoryType: 'general' as const,
       categoryIcon: 'user',
-      subcats: ['Culture', 'Uniform', 'Employee Conduct'],
+      subcats: [
+        { en: 'Culture', es: 'Cultura' },
+        { en: 'Uniform', es: 'Uniforme' },
+        { en: 'Conduct', es: 'Conducta' },
+      ],
     },
     {
       nameEn: 'Food Safety',
@@ -29,10 +33,10 @@ async function seedCategories() {
       categoryType: 'general' as const,
       categoryIcon: 'shield-check',
       subcats: [
-        'Hygiene',
-        'Cross-Contamination',
-        'Labelling and Dating',
-        'Allergy',
+        { en: 'Hygiene', es: 'Higiene' },
+        { en: 'Cross Contamination', es: 'Contaminación Cruzada' },
+        { en: 'Labeling & Dating', es: 'Etiquetado y Fechado' },
+        { en: 'Allergy', es: 'Alergias' },
       ],
     },
     {
@@ -40,7 +44,11 @@ async function seedCategories() {
       nameEs: 'Limpieza',
       categoryType: 'general' as const,
       categoryIcon: 'sparkles',
-      subcats: ['Dishwashing', 'Chemical Handling', 'Waste Disposal'],
+      subcats: [
+        { en: 'Dishwashing', es: 'Lavado de Platos' },
+        { en: 'Chemical Handling', es: 'Manejo de Productos Químicos' },
+        { en: 'Waste Disposal', es: 'Eliminación de Residuos' },
+      ],
     },
   ];
 
@@ -51,7 +59,10 @@ async function seedCategories() {
       nameEs: 'Operaciones de Cocina',
       categoryType: 'station_based' as const,
       categoryIcon: 'pot',
-      subcats: ['Station Setup', 'Kitchen Communication'],
+      subcats: [
+        { en: 'Station Setup', es: 'Configuración de Estación' },
+        { en: 'Kitchen Communication', es: 'Comunicación en Cocina' },
+      ],
     },
     {
       nameEn: 'Opening and Closing',
@@ -59,9 +70,9 @@ async function seedCategories() {
       categoryType: 'station_based' as const,
       categoryIcon: 'door',
       subcats: [
-        'Opening Procedures',
-        'Closing Procedures',
-        'End of Day Checks',
+        { en: 'Opening Procedures', es: 'Procedimientos de Apertura' },
+        { en: 'Closing Procedures', es: 'Procedimientos de Cierre' },
+        { en: 'End of Day Checks', es: 'Revisiones de Fin de Día' },
       ],
     },
     {
@@ -69,14 +80,22 @@ async function seedCategories() {
       nameEs: 'Equipo',
       categoryType: 'station_based' as const,
       categoryIcon: 'briefcase',
-      subcats: ['Operation', 'Safety', 'Cleaning'],
+      subcats: [
+        { en: 'Operation', es: 'Operación' },
+        { en: 'Equipment Safety', es: 'Seguridad del Equipo' },
+        { en: 'Equipment Cleaning', es: 'Limpieza del Equipo' },
+      ],
     },
     {
       nameEn: 'Recipes',
       nameEs: 'Recetas',
       categoryType: 'station_based' as const,
       categoryIcon: 'book-open',
-      subcats: ['Plating', 'Cooking', 'Portion Standards'],
+      subcats: [
+        { en: 'Plating', es: 'Emplatado' },
+        { en: 'Cooking', es: 'Cocción' },
+        { en: 'Portion Standards', es: 'Estándares de Porciones' },
+      ],
     },
   ];
 
@@ -91,7 +110,7 @@ async function seedCategories() {
         nameEn: data.nameEn,
         nameEs: data.nameEs,
         categoryType: data.categoryType,
-        categoryIcon: data.categoryIcon,
+        categoryIcon: data.nameEn,
         createdBy: creatorId,
       })
       .returning();
@@ -100,11 +119,12 @@ async function seedCategories() {
 
     // 2. Insert Subcategories
     if (data.subcats.length > 0) {
-      const subcatsToInsert = data.subcats.map((subName) => ({
+      const subcatsToInsert = data.subcats.map((subcat) => ({
         id: crypto.randomUUID(),
         categoryId: insertedCategory.id,
-        nameEn: subName,
-        nameEs: `${subName} (es)`, // Placeholder for spanish translation
+        nameEn: subcat.en,
+        nameEs: subcat.es,
+        subcategoryIcon: subcat.en, // Use subcategory name for the icon
         createdBy: creatorId,
       }));
 

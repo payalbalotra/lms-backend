@@ -1,6 +1,6 @@
 import pino, { type LoggerOptions } from 'pino';
 
-// Per-request lines are formatted inline in server.ts (console.log + file);
+// Per-request lines are formatted inline in server.ts (console.log);
 // pino here covers everything else. See memory: log-preferences.md for the
 // hard rules (one record per line, no headers / cookies / JWTs, err stripped
 // to { msg, code }).
