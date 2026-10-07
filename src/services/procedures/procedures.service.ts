@@ -1,9 +1,9 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { procedures, type ProcedureStatus } from '../../db/index.ts';
-import { categories } from '../../db/categories.schema.ts';
+
 import { logger } from '../../config/logger.ts';
 import {
   procedureBodySchema,
@@ -11,10 +11,13 @@ import {
   type CreateProcedureInput,
   type ProcedureBody,
 } from '../../db/procedure.schema.ts';
+import { subcategories } from '../../db/subcategories.schema.ts';
+import { stations } from '../../db/stations.schema.ts';
+import { employees } from '../../db/employee.schema.ts';
 import {
-  publicCategory,
-  type PublicCategory,
-} from '../categories/categories.service.ts';
+  publicSubcategory,
+  type PublicSubcategory,
+} from '../categories/subcategories.service.ts';
 
 // Wire shape returned by the API. Same fields as the row, with Date
 // serialised to ISO and the JSON bodies parsed back to objects so the
@@ -29,11 +32,15 @@ export interface PublicProcedure {
   titleEs: string;
   purposeEn: string;
   purposeEs: string;
-  category: PublicCategory | null;
+  subcategory: PublicSubcategory | null;
+  stationId: string | null;
+  quizId: string | null;
+  procedureImage: string | null;
+  assignUsers: string[] | null;
   status: ProcedureStatus;
   bodyEn: ProcedureBody;
   bodyEs: ProcedureBody;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,7 +71,7 @@ export function parseStoredBody(raw: unknown, where: string): ProcedureBody {
 // subcategory (or null). publicProcedure takes that row shape directly.
 export function publicProcedure(
   row: Readonly<typeof procedures.$inferSelect> & {
-    category: typeof categories.$inferSelect | null;
+    subcategory: typeof subcategories.$inferSelect | null;
   },
 ): PublicProcedure {
   const p = row;
@@ -75,7 +82,11 @@ export function publicProcedure(
     titleEs: p.titleEs,
     purposeEn: p.purposeEn,
     purposeEs: p.purposeEs,
-    category: p.category ? publicCategory(p.category) : null,
+    subcategory: p.subcategory ? publicSubcategory(p.subcategory) : null,
+    stationId: p.stationId,
+    quizId: p.quizId,
+    procedureImage: p.procedureImage,
+    assignUsers: p.assignUsers,
     status: p.status,
     bodyEn: parseStoredBody(p.blocksEn, `${p.id}/blocksEn`),
     bodyEs: parseStoredBody(p.blocksEs, `${p.id}/blocksEs`),
@@ -125,7 +136,7 @@ async function generateUniqueSlug(base: string): Promise<string> {
 
 export async function createProcedure(
   input: CreateProcedureInput,
-  actor: { employeeId: string },
+  actor: { employeeId: string; userId?: string | undefined },
 ): Promise<PublicProcedure> {
   const bodyEn = procedureBodySchema.parse(input.bodyEn);
   const bodyEs = procedureBodySchema.parse(input.bodyEs);
@@ -147,18 +158,69 @@ export async function createProcedure(
   // Verify the picked subcategory exists. The FK has
   // SET NULL semantics — an invalid id would corrupt the row silently — so
   // we surface a clean 400 / 404 here.
-  if (input.categoryId !== null) {
-    const [cat] = await db
-      .select({
-        id: categories.id,
-      })
-      .from(categories)
-      .where(eq(categories.id, input.categoryId))
+  if (input.subcategoryId != null) {
+    const [subcat] = await db
+      .select({ id: subcategories.id })
+      .from(subcategories)
+      .where(eq(subcategories.id, input.subcategoryId))
       .limit(1);
-    if (!cat) {
-      throw Object.assign(new ApiError('Category not found', 404), {
-        errorCode: 'CATEGORY_NOT_FOUND',
+    if (!subcat) {
+      throw Object.assign(new ApiError('Subcategory not found', 404), {
+        errorCode: 'SUBCATEGORY_NOT_FOUND',
       });
+    }
+  }
+
+  // Verify the picked station exists. FK is SET NULL — an invalid id would
+  // silently corrupt the row, so surface a clean 400/404 here.
+  if (input.stationId != null) {
+    const [station] = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(eq(stations.id, input.stationId))
+      .limit(1);
+    if (!station) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+
+  if (input.quizId != null) {
+    // For now we don't strictly validate quiz existence, just let the DB throw a FK error
+    // or we can add it later when Quizzes are fully implemented
+  }
+
+  // Validate assignUsers to ensure they are valid employees (and not super_admins)
+  if (input.assignUsers && input.assignUsers.length > 0) {
+    const assigned = await db
+      .select({ id: employees.id, role: employees.role })
+      .from(employees)
+      .where(
+        sql`${employees.id} = ANY(ARRAY[${sql.join(
+          input.assignUsers.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}])`,
+      );
+
+    if (assigned.length !== input.assignUsers.length) {
+      throw Object.assign(
+        new ApiError('One or more assigned users do not exist', 400),
+        {
+          errorCode: 'ASSIGNED_USER_NOT_FOUND',
+        },
+      );
+    }
+
+    const invalidRoles = assigned.filter((a) => a.role !== 'employee');
+    if (invalidRoles.length > 0) {
+      throw Object.assign(
+        new ApiError(
+          'Only users with the employee role can be assigned to procedures',
+          400,
+        ),
+        { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
+      );
     }
   }
 
@@ -172,20 +234,24 @@ export async function createProcedure(
     titleEs: input.titleEs,
     purposeEn: input.purposeEn,
     purposeEs: input.purposeEs,
-    categoryId: input.categoryId,
+    subcategoryId: input.subcategoryId,
+    stationId: input.stationId ?? null,
+    quizId: input.quizId ?? null,
+    procedureImage: input.procedureImage ?? null,
+    assignUsers: input.assignUsers ?? null,
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
-    createdBy: actor.employeeId,
+    createdBy: actor.userId || null,
   });
 
   const [row] = await db
     .select({
       proc: procedures,
-      category: categories,
+      subcategory: subcategories,
     })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(eq(procedures.id, id))
     .limit(1);
   if (!row) {
@@ -195,7 +261,7 @@ export async function createProcedure(
   }
   return publicProcedure({
     ...row.proc,
-    category: row.category,
+    subcategory: row.subcategory,
   });
 }
 
@@ -210,13 +276,13 @@ export async function listProcedures(
     conditions.push(eq(procedures.status, filter.status));
   }
   const rows = await db
-    .select({ proc: procedures, category: categories })
+    .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(procedures.updatedAt));
   return rows.map((row) =>
-    publicProcedure({ ...row.proc, category: row.category }),
+    publicProcedure({ ...row.proc, subcategory: row.subcategory }),
   );
 }
 
@@ -228,13 +294,13 @@ export async function getProcedureBySlug(
   slug: string,
 ): Promise<PublicProcedure | null> {
   const [row] = await db
-    .select({ proc: procedures, category: categories })
+    .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
-    .leftJoin(categories, eq(categories.id, procedures.categoryId))
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(eq(procedures.slug, slug))
     .limit(1);
   if (!row) return null;
-  return publicProcedure({ ...row.proc, category: row.category });
+  return publicProcedure({ ...row.proc, subcategory: row.subcategory });
 }
 
 function assertRecipeIngredientsAlign(
@@ -242,14 +308,14 @@ function assertRecipeIngredientsAlign(
   lang: 'en' | 'es',
 ): void {
   for (const block of blocks) {
-    if (block.kind !== 'recipe') continue;
+    if (block.kind !== 'recipe' && block.kind !== 'ingredients') continue;
     const recipe = block;
     const hasIngredients = (recipe.ingredients?.length ?? 0) > 0;
     const hasFactors = (recipe.factors?.length ?? 0) > 0;
     if (hasIngredients !== hasFactors) {
       throw Object.assign(
         new ApiError(
-          `Recipe block ingredients and factors must be set together (${lang}).`,
+          `Block ingredients and factors must be set together (${lang}).`,
           400,
         ),
         { errorCode: 'INVALID_INPUT' },
