@@ -1,13 +1,21 @@
 import 'dotenv/config';
 import { db, closeDb } from '../src/db/client.js';
-import { categories, subcategories } from '../src/db/index.js';
-
-const SYSTEM_USER_ID = 'Fia2LLwNINbkqVCBAEidfZNNmkQpYMiC'; // Super Admin User ID
+import { categories, subcategories, user } from '../src/db/index.js';
+import { eq } from 'drizzle-orm';
 
 async function seedCategories() {
   console.log('Seeding categories and subcategories...');
 
-  const creatorId = SYSTEM_USER_ID;
+  const [adminUser] = await db
+    .select()
+    .from(user)
+    .where(eq(user.email, 'admin@yopmail.com'))
+    .limit(1);
+  if (!adminUser) {
+    throw new Error('Admin user not found.');
+  }
+
+  const creatorId = adminUser.id;
   console.log(`Using User ID for creator: ${creatorId}`);
 
   console.log('Clearing old categories and subcategories...');
@@ -106,7 +114,6 @@ async function seedCategories() {
     const [insertedCategory] = await db
       .insert(categories)
       .values({
-        id: crypto.randomUUID(),
         nameEn: data.nameEn,
         nameEs: data.nameEs,
         categoryType: data.categoryType,
@@ -120,7 +127,6 @@ async function seedCategories() {
     // 2. Insert Subcategories
     if (data.subcats.length > 0) {
       const subcatsToInsert = data.subcats.map((subcat) => ({
-        id: crypto.randomUUID(),
         categoryId: insertedCategory.id,
         nameEn: subcat.en,
         nameEs: subcat.es,

@@ -168,6 +168,8 @@ async function run(): Promise<void> {
   await fetchMainLocationId();
   await ensureMasterEmployee();
 
+  await ensureSuperAdminUser();
+
   console.log('\n===========================================');
   console.log('Running seed-categories.ts...');
   console.log('===========================================\n');
@@ -185,7 +187,27 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  await ensureSuperAdminUser();
+  console.log('\n===========================================');
+  console.log('Running seed-recipes.ts...');
+  console.log('===========================================\n');
+  const recipeResult = spawnSync(
+    'npx',
+    [
+      'tsx',
+      '--env-file=development.env',
+      path.join(__dirname, 'seed-recipes.ts'),
+    ],
+    {
+      stdio: 'inherit',
+      env: process.env,
+      shell: true,
+    },
+  );
+  if (recipeResult.status !== 0) {
+    console.error(`\n❌ Failed executing seed-recipes.ts`);
+    process.exit(1);
+  }
+
   console.log('\n✅ All seeds completed successfully!');
 }
 
