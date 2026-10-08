@@ -7,6 +7,7 @@ import {
 } from '../../shared/validations/subcategories.schema.ts';
 import * as subcategoriesService from '../../services/categories/subcategories.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 export const listSubcategoriesAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -14,12 +15,18 @@ export const listSubcategoriesAdmin = catchAsync(
     const { categoryId } = req.params;
     if (!categoryId) throw new ApiError('Missing categoryId', 400);
 
+    const { page, limit, search } = getPaginationParams(req.query);
+
     const items = await subcategoriesService.listSubcategories(
       categoryId as string,
+      page,
+      limit,
+      search,
     );
     res.status(200).json(
       ApiResponse.success('Subcategories retrieved successfully', {
-        subcategories: items,
+        subcategories: items.items,
+        meta: items.meta,
       }),
     );
   },

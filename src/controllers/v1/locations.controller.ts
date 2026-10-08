@@ -8,13 +8,16 @@ import {
 } from '../../shared/validations/employees.schema.ts';
 import * as locationsService from '../../services/location/location.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 export const listLocations = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const result = await locationsService.listLocations();
+  async (req: Request, res: Response): Promise<void> => {
+    const { page, limit, search } = getPaginationParams(req.query);
+    const result = await locationsService.listLocations(page, limit, search);
     res.status(200).json(
       ApiResponse.success('Locations retrieved successfully', {
-        locations: result,
+        locations: result.items,
+        meta: result.meta,
       }),
     );
   },

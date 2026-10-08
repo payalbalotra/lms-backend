@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, count, ilike } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { stations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
@@ -26,9 +30,29 @@ export interface StationPatchInput {
   name?: string | undefined;
 }
 
-export async function listStations(): Promise<PublicStation[]> {
-  const rows = await db.select().from(stations);
-  return rows.map(publicStation);
+export async function listStations(
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<PublicStation>> {
+  const offset = (page - 1) * limit;
+  const whereClause = search ? ilike(stations.name, `%${search}%`) : undefined;
+  const rows = await db
+    .select()
+    .from(stations)
+    .where(whereClause)
+    .limit(limit)
+    .offset(offset);
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(stations)
+    .where(whereClause);
+  return formatPaginatedResult(
+    rows.map(publicStation),
+    countRes?.total ?? 0,
+    page,
+    limit,
+  );
 }
 
 export async function createStation(

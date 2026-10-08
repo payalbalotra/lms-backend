@@ -1,6 +1,20 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  SQL,
+  and,
+  desc,
+  eq,
+  inArray,
+  sql,
+  count,
+  ilike,
+  or,
+} from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { procedures, type ProcedureStatus } from '../../db/index.ts';
 
@@ -402,9 +416,12 @@ export async function listProcedures(
     stationIds?: string[] | undefined;
     subcategoryIds?: string[] | undefined;
     categoryIds?: string[] | undefined;
+    search?: string | undefined;
   } = {},
-): Promise<PublicProcedure[]> {
-  const conditions = [];
+  page: number = 1,
+  limit: number = 10,
+): Promise<PaginatedResult<PublicProcedure>> {
+  const conditions: SQL[] = [];
 
   if (filter.status) {
     conditions.push(eq(procedures.status, filter.status));
@@ -422,16 +439,37 @@ export async function listProcedures(
     conditions.push(inArray(subcategories.categoryId, filter.categoryIds));
   }
 
+  if (filter.search) {
+    conditions.push(
+      or(
+        ilike(procedures.titleEn, `%${filter.search}%`),
+        ilike(procedures.titleEs, `%${filter.search}%`),
+      )!,
+    );
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  const offset = (page - 1) * limit;
+
   const rows = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
     .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(procedures.updatedAt));
+    .where(whereClause)
+    .orderBy(desc(procedures.updatedAt))
+    .limit(limit)
+    .offset(offset);
 
-  return rows.map((row) =>
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(whereClause);
+
+  const mapped = rows.map((row) =>
     publicProcedure({ ...row.proc, subcategory: row.subcategory }),
   );
+  return formatPaginatedResult(mapped, countRes?.total ?? 0, page, limit);
 }
 
 /** Fetch a single procedure by slug (used by the public doc view). Returns

@@ -94,21 +94,10 @@ export const auth = betterAuth({
         // We only use this plugin for password-reset OTPs.
         if (type !== 'forget-password') return;
 
-        // Resolve the user's name for the email template.
-        const { user: userTable } = await import('../db/index.ts');
-        const { eq: eqFn } = await import('drizzle-orm');
-        const [userRow] = await db
-          .select({ name: userTable.name })
-          .from(userTable)
-          .where(eqFn(userTable.email, email))
-          .limit(1);
-
-        const userName = userRow?.name ?? 'there';
-
         try {
           const html = getAuthEmailAndResetPasswordTemplate(
             'Reset Your Password',
-            `Hi ${userName},<br><br>We received a request to reset your password. Use the verification code below to proceed. It expires in <strong>10 minutes</strong>.`,
+            `We received a request to reset your password. Use the verification code below to proceed. It expires in <strong>10 minutes</strong>.`,
             otp,
           );
           await resend.emails.send({

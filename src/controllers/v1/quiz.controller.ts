@@ -4,6 +4,7 @@ import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import { createQuizInputSchema } from '../../db/quiz.schema.ts';
 import * as quizzesService from '../../services/quiz/quiz.service.ts';
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 // POST /api/admin/library/quizzes
 export const createQuiz = catchAsync(
@@ -46,11 +47,15 @@ export const getQuiz = catchAsync(
 
 // GET /api/v1/quizzes
 export const listQuizzes = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const quizzes = await quizzesService.listQuizzes();
+  async (req: Request, res: Response): Promise<void> => {
+    const { page, limit, search } = getPaginationParams(req.query);
+    const quizzes = await quizzesService.listQuizzes(page, limit, search);
 
-    res
-      .status(200)
-      .json(ApiResponse.success('Quizzes fetched successfully', { quizzes }));
+    res.status(200).json(
+      ApiResponse.success('Quizzes fetched successfully', {
+        quizzes: quizzes.items,
+        meta: quizzes.meta,
+      }),
+    );
   },
 );

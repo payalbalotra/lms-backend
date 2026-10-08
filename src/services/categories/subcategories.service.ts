@@ -1,6 +1,10 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, count, ilike, or, and, SQL } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { categories } from '../../db/categories.schema.ts';
 import { subcategories } from '../../db/subcategories.schema.ts';
@@ -25,13 +29,42 @@ export function publicSubcategory(
 
 export async function listSubcategories(
   categoryId: string,
-): Promise<PublicSubcategory[]> {
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<PublicSubcategory>> {
+  const offset = (page - 1) * limit;
+
+  const conditions: SQL[] = [eq(subcategories.categoryId, categoryId)];
+  if (search) {
+    conditions.push(
+      or(
+        ilike(subcategories.nameEn, `%${search}%`),
+        ilike(subcategories.nameEs, `%${search}%`),
+      )!,
+    );
+  }
+  const whereClause = and(...conditions);
+
   const rows = await db
     .select()
     .from(subcategories)
-    .where(eq(subcategories.categoryId, categoryId))
-    .orderBy(asc(subcategories.createdAt));
-  return rows.map(publicSubcategory);
+    .where(whereClause)
+    .orderBy(asc(subcategories.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(subcategories)
+    .where(whereClause);
+
+  return formatPaginatedResult(
+    rows.map(publicSubcategory),
+    countRes?.total ?? 0,
+    page,
+    limit,
+  );
 }
 
 export interface SubcategoryCreateInput {

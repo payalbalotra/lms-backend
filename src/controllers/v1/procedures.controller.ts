@@ -3,7 +3,7 @@ import ApiError from '../../shared/utils/ApiError.ts';
 import type { Request, Response } from 'express';
 
 import * as proceduresService from '../../services/procedures/procedures.service.ts';
-
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 import {
   procedureStatuses,
   type ProcedureStatus,
@@ -74,16 +74,23 @@ export const updateProcedure = catchAsync(
 // GET /api/v1/procedures
 export const getAllProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
+    const { page, limit, search } = getPaginationParams(req.query);
+
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
     }
 
-    const procedures = await proceduresService.listProcedures({});
+    const paginatedResult = await proceduresService.listProcedures(
+      { search },
+      page,
+      limit,
+    );
     res.status(200).json(
       ApiResponse.success('Procedures retrieved successfully', {
-        procedures,
+        procedures: paginatedResult.items,
+        meta: paginatedResult.meta,
       }),
     );
   },
@@ -161,15 +168,23 @@ export const filterProcedures = catchAsync(
       }
     }
 
-    const procedures = await proceduresService.listProcedures({
-      status,
-      stationIds,
-      subcategoryIds,
-      categoryIds,
-    });
+    const { page, limit, search } = getPaginationParams(req.query);
+
+    const paginatedResult = await proceduresService.listProcedures(
+      {
+        status,
+        stationIds,
+        subcategoryIds,
+        categoryIds,
+        search,
+      },
+      page,
+      limit,
+    );
     res.status(200).json(
       ApiResponse.success('Filtered procedures retrieved successfully', {
-        procedures,
+        procedures: paginatedResult.items,
+        meta: paginatedResult.meta,
       }),
     );
   },

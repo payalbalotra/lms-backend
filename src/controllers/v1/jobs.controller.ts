@@ -8,15 +8,18 @@ import {
 } from '../../shared/validations/employees.schema.ts';
 import * as jobsService from '../../services/job/jobs.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 export const listJobs = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const result = await jobsService.listJobs();
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Jobs retrieved successfully', { jobs: result }),
-      );
+  async (req: Request, res: Response): Promise<void> => {
+    const { page, limit, search } = getPaginationParams(req.query);
+    const result = await jobsService.listJobs(page, limit, search);
+    res.status(200).json(
+      ApiResponse.success('Jobs retrieved successfully', {
+        jobs: result.items,
+        meta: result.meta,
+      }),
+    );
   },
 );
 
