@@ -73,7 +73,7 @@ export const getAuthEmailAndResetPasswordTemplate = (
               </table>
 
               <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#737373;line-height:1.6;">
-                Didn't request this? You can safely ignore this email — no account will be created and nothing will change.
+                Didn't request this? You can safely ignore this email - no account will be created and nothing will change.
               </p>
             </td>
           </tr>
@@ -151,7 +151,7 @@ export const getInviteEmailTemplate = (
             <td style="padding:40px;">
               <h1 style="margin:0 0 16px;text-align:center;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:24px;font-weight:700;color:#1A1A1A;line-height:1.2;letter-spacing:-0.3px;">${title}</h1>
               <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:16px;color:#4A4A4A;line-height:1.6;">
-                Hi <strong>${employeeName}</strong>,<br><br>
+                Hi ${employeeName?.trim() || 'there'},<br><br>
                 You've been invited to join the <strong>${RESTAURANT_NAME} LMS</strong> platform. Please click the button below to set up your account password and log in.
               </p>
               

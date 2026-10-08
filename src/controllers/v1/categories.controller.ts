@@ -8,6 +8,7 @@ import {
 import { subcategoryCreateSchema } from '../../shared/validations/subcategories.schema.ts';
 import * as categoriesService from '../../services/categories/categories.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { getPaginationParams } from '../../shared/utils/pagination.ts';
 export const listCategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
@@ -16,10 +17,12 @@ export const listCategories = catchAsync(
       });
     }
 
-    const cats = await categoriesService.listCategories();
+    const { page, limit, search } = getPaginationParams(req.query);
+    const cats = await categoriesService.listCategories(page, limit, search);
     res.status(200).json(
       ApiResponse.success('Categories retrieved successfully', {
-        categories: cats,
+        categories: cats.items,
+        meta: cats.meta,
       }),
     );
   },

@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql, count, ilike } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { jobs, stations, employees } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
@@ -30,9 +34,29 @@ export interface JobPatchInput {
   stationIds?: string[] | undefined;
 }
 
-export async function listJobs(): Promise<PublicJob[]> {
-  const rows = await db.select().from(jobs);
-  return rows.map((r) => publicJob(r));
+export async function listJobs(
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<PublicJob>> {
+  const offset = (page - 1) * limit;
+  const whereClause = search ? ilike(jobs.name, `%${search}%`) : undefined;
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(whereClause)
+    .limit(limit)
+    .offset(offset);
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(jobs)
+    .where(whereClause);
+  return formatPaginatedResult(
+    rows.map((r) => publicJob(r)),
+    countRes?.total ?? 0,
+    page,
+    limit,
+  );
 }
 
 // ---------------------------------------------------------------------------

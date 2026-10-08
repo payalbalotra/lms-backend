@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, count, ilike } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { employees, locations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
@@ -26,9 +30,29 @@ export interface LocationPatchInput {
   name: string;
 }
 
-export async function listLocations(): Promise<PublicLocation[]> {
-  const rows = await db.select().from(locations);
-  return rows.map(publicLocation);
+export async function listLocations(
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<PublicLocation>> {
+  const offset = (page - 1) * limit;
+  const whereClause = search ? ilike(locations.name, `%${search}%`) : undefined;
+  const rows = await db
+    .select()
+    .from(locations)
+    .where(whereClause)
+    .limit(limit)
+    .offset(offset);
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(locations)
+    .where(whereClause);
+  return formatPaginatedResult(
+    rows.map(publicLocation),
+    countRes?.total ?? 0,
+    page,
+    limit,
+  );
 }
 
 export async function createLocation(

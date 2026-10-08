@@ -7,7 +7,11 @@ import {
   updateSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
-import { and, eq } from 'drizzle-orm';
+import { SQL, and, eq, count, ilike, or } from 'drizzle-orm';
+import {
+  getPaginationParams,
+  formatPaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { employees, locations, session } from '../../db/index.ts';
 import {
@@ -212,13 +216,23 @@ export const reactivate = catchAsync(
 // ---------- GET /api/admin/employees?status=... ----------------------------
 export const listEmployees = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
+    const { page, limit, offset, search } = getPaginationParams(req.query);
     const q = statusEnum.safeParse(req.query.status ?? 'all');
     const status = q.success ? q.data : 'all';
 
-    const conditions: ReturnType<typeof eq>[] = [];
+    const conditions: SQL[] = [];
     if (status !== 'all') {
       conditions.push(eq(employees.status, status));
     }
+    if (search) {
+      conditions.push(
+        or(
+          ilike(employees.name, `%${search}%`),
+          ilike(employees.email, `%${search}%`),
+        )!,
+      );
+    }
+    const whereClause = conditions.length ? and(...conditions) : undefined;
 
     const rows = await db
       .select({
@@ -227,15 +241,30 @@ export const listEmployees = catchAsync(
       })
       .from(employees)
       .leftJoin(locations, eq(locations.id, employees.locationId))
-      .where(conditions.length ? and(...conditions) : undefined);
+      .where(whereClause)
+      .limit(limit)
+      .offset(offset);
+
+    const [countRes] = await db
+      .select({ total: count() })
+      .from(employees)
+      .where(whereClause);
+
+    const mappedEmployees = rows.map((r) => ({
+      ...publicEmployee(r.employee),
+      locationName: r.locationName,
+      roleName: r.employee.role,
+    }));
 
     res.status(200).json(
       ApiResponse.success('Employees retrieved successfully', {
-        employees: rows.map((r) => ({
-          ...publicEmployee(r.employee),
-          locationName: r.locationName,
-          roleName: r.employee.role,
-        })),
+        employees: mappedEmployees,
+        meta: formatPaginatedResult(
+          mappedEmployees,
+          countRes?.total ?? 0,
+          page,
+          limit,
+        ).meta,
       }),
     );
   },

@@ -1,6 +1,10 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, count, ilike, or, SQL } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { categories } from '../../db/categories.schema.ts';
 import { subcategories } from '../../db/subcategories.schema.ts';
@@ -42,12 +46,42 @@ export interface CategoryPatchInput {
 // Ordered insertion-first (created_at ASC), slug tie-break. The manager can
 // reshuffle later by renaming + archiving; if the team actually wants a
 // drag-and-drop re-order UI we'll add a sort_order column in a follow-up.
-export async function listCategories(): Promise<PublicCategory[]> {
+export async function listCategories(
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<PublicCategory>> {
+  const offset = (page - 1) * limit;
+  const conditions: SQL[] = [];
+  if (search) {
+    conditions.push(
+      or(
+        ilike(categories.nameEn, `%${search}%`),
+        ilike(categories.nameEs, `%${search}%`),
+      )!,
+    );
+  }
+  const whereClause = conditions.length ? conditions[0] : undefined;
+
   const rows = await db
     .select()
     .from(categories)
-    .orderBy(asc(categories.createdAt));
-  return rows.map(publicCategory);
+    .where(whereClause)
+    .orderBy(asc(categories.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(categories)
+    .where(whereClause);
+
+  return formatPaginatedResult(
+    rows.map(publicCategory),
+    countRes?.total ?? 0,
+    page,
+    limit,
+  );
 }
 
 export async function createCategory(

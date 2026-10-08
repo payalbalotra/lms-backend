@@ -1,6 +1,10 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, count, ilike, or } from 'drizzle-orm';
+import {
+  formatPaginatedResult,
+  type PaginatedResult,
+} from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import { quiz } from '../../db/index.ts';
 import {
@@ -54,8 +58,25 @@ export async function getQuiz(id: string): Promise<Quiz> {
   return row;
 }
 
-export async function listQuizzes(): Promise<Quiz[]> {
-  const rows = await db.select().from(quiz).orderBy(desc(quiz.createdAt));
-
-  return rows;
+export async function listQuizzes(
+  page: number = 1,
+  limit: number = 10,
+  search?: string,
+): Promise<PaginatedResult<Quiz>> {
+  const offset = (page - 1) * limit;
+  const whereClause = search
+    ? or(ilike(quiz.nameEn, `%${search}%`), ilike(quiz.nameEs, `%${search}%`))!
+    : undefined;
+  const rows = await db
+    .select()
+    .from(quiz)
+    .where(whereClause)
+    .orderBy(desc(quiz.createdAt))
+    .limit(limit)
+    .offset(offset);
+  const [countRes] = await db
+    .select({ total: count() })
+    .from(quiz)
+    .where(whereClause);
+  return formatPaginatedResult(rows, countRes?.total ?? 0, page, limit);
 }
