@@ -1,6 +1,5 @@
 import * as dotenv from 'dotenv';
 dotenv.config({ path: 'development.env' });
-import crypto from 'node:crypto';
 import { sql, closeDb } from '../src/db/client.js';
 
 const STATIONS_DATA = [
@@ -28,11 +27,12 @@ async function seedStations() {
       await sql`SELECT id FROM stations WHERE name = ${item.name}`;
     let stationId;
     if (existingStation.length === 0) {
-      stationId = crypto.randomUUID();
-      await sql`
-        INSERT INTO stations (id, name)
-        VALUES (${stationId}, ${item.name})
+      const res = await sql`
+        INSERT INTO stations (name)
+        VALUES (${item.name})
+        RETURNING id
       `;
+      stationId = res[0].id;
     } else {
       stationId = existingStation[0].id;
     }

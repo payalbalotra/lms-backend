@@ -1,9 +1,8 @@
 import type { Request, Response } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
-import { eq, and, gt } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { employees, user, account } from '../../db/index.ts';
-import { session } from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
 import {
   loginUser,
@@ -31,14 +30,26 @@ export const signUp = catchAsync(
       asResponse: true,
     });
 
+    if (!signUpResponse.ok) {
+      const error = await signUpResponse.json().catch(() => ({}));
+      throw new ApiError(
+        error.message || 'Sign up failed',
+        signUpResponse.status || 400,
+        true,
+        '',
+        { code: error.code || 'SIGN_UP_FAILED' },
+      );
+    }
+
     await db
       .update(user)
       .set({ emailVerified: true })
       .where(eq(user.email, email));
 
-    const setCookie = signUpResponse.headers.get('set-cookie');
-    if (setCookie) {
-      res.setHeader('Set-Cookie', setCookie.split(/,(?=\s*[A-Za-z0-9_-]+=)/));
+    // better-auth's getSetCookie() returns an array of strings
+    const setCookies = signUpResponse.headers.getSetCookie();
+    if (setCookies.length > 0) {
+      res.setHeader('Set-Cookie', setCookies);
     }
 
     res
@@ -53,7 +64,9 @@ export const signUp = catchAsync(
 export const me = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const session = await getSessionService(req);
-    res.status(200).json(ApiResponse.success('Session retrieved', session));
+    res
+      .status(200)
+      .json(ApiResponse.success('Session retrieved Successfully', session));
   },
 );
 
@@ -66,6 +79,10 @@ export const login = catchAsync(
     const { email, password } = req.body;
 
     const result = await loginUser({ email, password });
+
+    if (result.setCookies && result.setCookies.length > 0) {
+      res.setHeader('Set-Cookie', result.setCookies);
+    }
 
     // Return the token in the body — client stores it and sends it on every
     // subsequent request as:  Authorization: Bearer <token>
@@ -96,25 +113,7 @@ export const setPassword = catchAsync(
       headers: fromNodeHeaders(req.headers),
     });
 
-    const bearerToken = (req.headers['authorization'] ?? '')
-      .replace(/^Bearer /, '')
-      .trim();
-
-    let userId: string | null = cookieSession?.user.id ?? null;
-
-    if (!userId && bearerToken) {
-      const [row] = await db
-        .select({ userId: session.userId })
-        .from(session)
-        .where(
-          and(
-            eq(session.token, bearerToken),
-            gt(session.expiresAt, new Date()),
-          ),
-        )
-        .limit(1);
-      userId = row?.userId ?? null;
-    }
+    const userId: string | null = cookieSession?.user.id ?? null;
 
     if (!userId) {
       throw new ApiError(

@@ -48,6 +48,7 @@ export interface LoginServiceResult {
   user: any;
   // Raw session token — client stores and sends as: Authorization: Bearer <token>
   token: string;
+  setCookies?: string[];
 }
 
 export async function loginUser(
@@ -83,6 +84,7 @@ export async function loginUser(
   return {
     user: data.user,
     token,
+    setCookies: signInResponse.headers.getSetCookie(),
   };
 }
 
