@@ -41,8 +41,8 @@ export const createProcedure = catchAsync(
   },
 );
 
-// GET /api/admin/library/procedures
-export const listProcedures = catchAsync(
+// PUT /api/v1/procedures/:id
+export const updateProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
       throw new ApiError('Not authenticated', 401, true, '', {
@@ -50,6 +50,55 @@ export const listProcedures = catchAsync(
       });
     }
 
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const parsed = createProcedureInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const procedure = await proceduresService.updateProcedure(id, parsed.data);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure updated successfully', { procedure }),
+      );
+  },
+);
+
+// GET /api/v1/procedures
+export const getAllProcedures = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const procedures = await proceduresService.listProcedures({});
+    res.status(200).json(
+      ApiResponse.success('Procedures retrieved successfully', {
+        procedures,
+      }),
+    );
+  },
+);
+
+// GET /api/v1/procedures/filter
+export const filterProcedures = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    // -- status filter --
     const raw = req.query.status;
     let status: ProcedureStatus | undefined;
     if (typeof raw === 'string' && raw.length > 0) {
@@ -71,9 +120,55 @@ export const listProcedures = catchAsync(
       status = raw as ProcedureStatus;
     }
 
-    const procedures = await proceduresService.listProcedures({ status });
+    // -- array filters --
+    const parseUuidList = (param: unknown): string[] | undefined => {
+      const raw = Array.isArray(param) ? param.join(',') : param;
+      if (typeof raw !== 'string' || raw.trim().length === 0) return undefined;
+      return raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    };
+
+    const stationIds = parseUuidList(req.query.stationIds);
+    const subcategoryIds = parseUuidList(req.query.subcategoryIds);
+    const categoryIds = parseUuidList(req.query.categoryIds);
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    const validateUuids = (ids: string[] | undefined, name: string) => {
+      if (ids && ids.some((id) => !uuidRegex.test(id))) {
+        return { error: `${name} must be valid UUIDs` };
+      }
+      return null;
+    };
+
+    for (const [ids, name] of [
+      [stationIds, 'stationIds'],
+      [subcategoryIds, 'subcategoryIds'],
+      [categoryIds, 'categoryIds'],
+    ] as const) {
+      const err = validateUuids(ids, name);
+      if (err) {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_INPUT',
+            message: err.error,
+          },
+        });
+        return;
+      }
+    }
+
+    const procedures = await proceduresService.listProcedures({
+      status,
+      stationIds,
+      subcategoryIds,
+      categoryIds,
+    });
     res.status(200).json(
-      ApiResponse.success('Procedures retrieved successfully', {
+      ApiResponse.success('Filtered procedures retrieved successfully', {
         procedures,
       }),
     );
@@ -106,6 +201,55 @@ export const getProcedure = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Procedure retrieved successfully', { procedure }),
+      );
+  },
+);
+// POST /api/v1/procedures/:id/archive  (super_admin only)
+export const archiveProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const procedure = await proceduresService.archiveProcedure(id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure archived successfully', { procedure }),
+      );
+  },
+);
+
+// POST /api/v1/procedures/:id/unarchive  (super_admin only)
+export const unarchiveProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const procedure = await proceduresService.unarchiveProcedure(id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure unarchived successfully', { procedure }),
       );
   },
 );

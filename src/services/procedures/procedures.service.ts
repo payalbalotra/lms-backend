@@ -1,6 +1,6 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { procedures, type ProcedureStatus } from '../../db/index.ts';
 
@@ -38,6 +38,7 @@ export interface PublicProcedure {
   procedureImage: string | null;
   assignUsers: string[] | null;
   status: ProcedureStatus;
+  previousStatus: ProcedureStatus | null;
   bodyEn: ProcedureBody;
   bodyEs: ProcedureBody;
   createdBy: string | null;
@@ -88,6 +89,7 @@ export function publicProcedure(
     procedureImage: p.procedureImage,
     assignUsers: p.assignUsers,
     status: p.status,
+    previousStatus: (p.previousStatus as ProcedureStatus) ?? null,
     bodyEn: parseStoredBody(p.blocksEn, `${p.id}/blocksEn`),
     bodyEs: parseStoredBody(p.blocksEs, `${p.id}/blocksEs`),
     createdBy: p.createdBy,
@@ -265,22 +267,168 @@ export async function createProcedure(
   });
 }
 
-/** Admin-only list of procedures. Newest first. Optionally filtered by status
- *  (`'draft' | 'published'`). Returns the full public shape so the editor can
- *  re-open a draft without a second fetch. */
+/** Update an existing procedure by ID. Follows the same validation as create. */
+export async function updateProcedure(
+  id: string,
+  input: CreateProcedureInput,
+): Promise<PublicProcedure> {
+  const [existing] = await db
+    .select({ id: procedures.id })
+    .from(procedures)
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  const bodyEn = procedureBodySchema.parse(input.bodyEn);
+  const bodyEs = procedureBodySchema.parse(input.bodyEs);
+
+  assertRecipeIngredientsAlign(bodyEn.blocks, 'en');
+  assertRecipeIngredientsAlign(bodyEs.blocks, 'es');
+
+  assertCriticalStepsHaveLimits(bodyEn.blocks, 'en');
+  assertCriticalStepsHaveLimits(bodyEs.blocks, 'es');
+
+  if (input.subcategoryId != null) {
+    const [subcat] = await db
+      .select({ id: subcategories.id })
+      .from(subcategories)
+      .where(eq(subcategories.id, input.subcategoryId))
+      .limit(1);
+    if (!subcat) {
+      throw Object.assign(new ApiError('Subcategory not found', 404), {
+        errorCode: 'SUBCATEGORY_NOT_FOUND',
+      });
+    }
+  }
+
+  if (input.stationId != null) {
+    const [station] = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(eq(stations.id, input.stationId))
+      .limit(1);
+    if (!station) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+
+  if (input.assignUsers && input.assignUsers.length > 0) {
+    const assigned = await db
+      .select({ id: employees.id, role: employees.role })
+      .from(employees)
+      .where(
+        sql`${employees.id} = ANY(ARRAY[${sql.join(
+          input.assignUsers.map((uid) => sql`${uid}::uuid`),
+          sql`, `,
+        )}])`,
+      );
+
+    if (assigned.length !== input.assignUsers.length) {
+      throw Object.assign(
+        new ApiError('One or more assigned users do not exist', 400),
+        { errorCode: 'ASSIGNED_USER_NOT_FOUND' },
+      );
+    }
+    const invalidRoles = assigned.filter((a) => a.role !== 'employee');
+    if (invalidRoles.length > 0) {
+      throw Object.assign(
+        new ApiError(
+          'Only users with the employee role can be assigned to procedures',
+          400,
+        ),
+        { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
+      );
+    }
+  }
+
+  await db
+    .update(procedures)
+    .set({
+      titleEn: input.titleEn,
+      titleEs: input.titleEs,
+      purposeEn: input.purposeEn,
+      purposeEs: input.purposeEs,
+      subcategoryId: input.subcategoryId,
+      stationId: input.stationId ?? null,
+      quizId: input.quizId ?? null,
+      procedureImage: input.procedureImage ?? null,
+      assignUsers: input.assignUsers ?? null,
+      status: input.status,
+      blocksEn: bodyEn,
+      blocksEs: bodyEs,
+      updatedAt: new Date(),
+    })
+    .where(eq(procedures.id, id));
+
+  const [row] = await db
+    .select({
+      proc: procedures,
+      subcategory: subcategories,
+    })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!row) {
+    throw Object.assign(new ApiError('Updated procedure not found', 500), {
+      errorCode: 'INTERNAL_ERROR',
+    });
+  }
+  return publicProcedure({
+    ...row.proc,
+    subcategory: row.subcategory,
+  });
+}
+
+/** Admin-only list of procedures. Newest first. Optionally filtered by:
+ *  - `status`         – 'draft' | 'published'
+ *  - `stationIds`     – one or more station UUIDs (OR semantics)
+ *  - `subcategoryIds` – one or more subcategory UUIDs (OR semantics)
+ *  - `categoryIds`    – one or more category UUIDs (OR semantics)
+ *
+ *  Returns the full public shape so the editor can re-open a draft without a
+ *  second fetch. */
 export async function listProcedures(
-  filter: { status?: ProcedureStatus | undefined } = {},
+  filter: {
+    status?: ProcedureStatus | undefined;
+    stationIds?: string[] | undefined;
+    subcategoryIds?: string[] | undefined;
+    categoryIds?: string[] | undefined;
+  } = {},
 ): Promise<PublicProcedure[]> {
   const conditions = [];
+
   if (filter.status) {
     conditions.push(eq(procedures.status, filter.status));
   }
+
+  if (filter.stationIds && filter.stationIds.length > 0) {
+    conditions.push(inArray(procedures.stationId, filter.stationIds));
+  }
+
+  if (filter.subcategoryIds && filter.subcategoryIds.length > 0) {
+    conditions.push(inArray(procedures.subcategoryId, filter.subcategoryIds));
+  }
+
+  if (filter.categoryIds && filter.categoryIds.length > 0) {
+    conditions.push(inArray(subcategories.categoryId, filter.categoryIds));
+  }
+
   const rows = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
     .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(procedures.updatedAt));
+
   return rows.map((row) =>
     publicProcedure({ ...row.proc, subcategory: row.subcategory }),
   );
@@ -301,6 +449,93 @@ export async function getProcedureBySlug(
     .limit(1);
   if (!row) return null;
   return publicProcedure({ ...row.proc, subcategory: row.subcategory });
+}
+
+/** Archive a procedure (draft → archived or published → archived).
+ *  Saves the current status in `previousStatus` so it can be restored.
+ *  Throws 404 when the id doesn't exist or the procedure is already archived. */
+export async function archiveProcedure(id: string): Promise<PublicProcedure> {
+  const [existing] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  if (existing.proc.status === 'archived') {
+    throw Object.assign(new ApiError('Procedure is already archived', 409), {
+      errorCode: 'ALREADY_ARCHIVED',
+    });
+  }
+
+  const now = new Date();
+  await db
+    .update(procedures)
+    .set({
+      previousStatus: existing.proc.status,
+      status: 'archived',
+      updatedAt: now,
+    })
+    .where(eq(procedures.id, id));
+
+  return publicProcedure({
+    ...existing.proc,
+    status: 'archived',
+    previousStatus: existing.proc.status,
+    updatedAt: now,
+    subcategory: existing.subcategory,
+  });
+}
+
+/** Unarchive a procedure — restores it to its `previousStatus` (draft or
+ *  published). Falls back to 'draft' if no previousStatus was recorded.
+ *  Throws 404 when the id doesn't exist or the procedure is not archived. */
+export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
+  const [existing] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  if (existing.proc.status !== 'archived') {
+    throw Object.assign(new ApiError('Procedure is not archived', 409), {
+      errorCode: 'NOT_ARCHIVED',
+    });
+  }
+
+  const restoreStatus: ProcedureStatus =
+    (existing.proc.previousStatus as ProcedureStatus) ?? 'draft';
+
+  const now = new Date();
+  await db
+    .update(procedures)
+    .set({
+      status: restoreStatus,
+      previousStatus: null,
+      updatedAt: now,
+    })
+    .where(eq(procedures.id, id));
+
+  return publicProcedure({
+    ...existing.proc,
+    status: restoreStatus,
+    previousStatus: null,
+    updatedAt: now,
+    subcategory: existing.subcategory,
+  });
 }
 
 function assertRecipeIngredientsAlign(

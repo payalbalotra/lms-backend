@@ -35,7 +35,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
         res.status(403).json({
           error: {
             code: 'FORBIDDEN',
-            message: `This action requires one of the following roles: ${allowedRoles.join(', ')}`,
+            message: 'You do not have permission to perform this action.',
           },
         });
         return;
@@ -80,7 +80,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
       res.status(403).json({
         error: {
           code: 'FORBIDDEN',
-          message: `This action requires one of the following roles: ${allowedRoles.join(', ')}`,
+          message: 'You do not have permission to perform this action.',
         },
       });
       return;

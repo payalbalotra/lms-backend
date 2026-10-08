@@ -18,8 +18,10 @@ export const createSchema = z.object({
     .nullable()
     .optional(),
   languagePref: z.enum(['en', 'es']).optional().default('en'),
+  status: statusEnum.exclude(['all']).optional().default('pending'),
 });
 
+export const updateSchema = createSchema.omit({ employeeCode: true });
 export const patchSchema = createSchema.partial();
 
 export const idParam = z.object({ id: z.string().uuid() });

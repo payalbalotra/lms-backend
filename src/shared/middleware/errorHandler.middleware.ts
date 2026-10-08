@@ -44,10 +44,12 @@ const errorConverter = (
     const first = err.issues[0];
     const where = first?.path?.join('.') ?? 'body';
     logger.warn(`validation failed: ${where} - ${first?.message ?? 'invalid'}`);
+
     const details = err.issues.map((i) => ({
       field: i.path.join('.'),
       message: i.message,
     }));
+
     error = new ApiError(
       'Invalid input',
       httpStatus.BAD_REQUEST,
