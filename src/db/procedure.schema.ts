@@ -14,7 +14,7 @@ import { stations } from './stations.schema.ts';
 
 import { user } from './auth.schema.ts';
 
-export const procedureStatuses = ['draft', 'published'] as const;
+export const procedureStatuses = ['draft', 'published', 'archived'] as const;
 export type ProcedureStatus = (typeof procedureStatuses)[number];
 
 export const procedures = pgTable(
@@ -40,6 +40,8 @@ export const procedures = pgTable(
     procedureImage: text('procedure_image'),
     assignUsers: uuid('assign_users').array(),
     status: text('status').$type<ProcedureStatus>().notNull().default('draft'),
+    // Stores the status before archiving so it can be restored on unarchive.
+    previousStatus: text('previous_status').$type<ProcedureStatus>(),
     blocksEn: jsonb('blocks_en').$type<unknown>().notNull(),
     blocksEs: jsonb('blocks_es').$type<unknown>().notNull(),
     createdBy: text('created_by').references(() => user.id, {
@@ -241,11 +243,16 @@ const attachmentBlockSchema = z.object({
   meta: z.string().optional(),
 });
 
+const tableCellString = z.object({
+  en: z.string(),
+  es: z.string(),
+});
+
 const tableBlockSchema = z.object({
   id: z.string().min(1),
   kind: z.literal('table'),
-  headers: z.array(localisedString).min(1),
-  rows: z.array(z.array(localisedString)),
+  headers: z.array(tableCellString).min(1),
+  rows: z.array(z.array(tableCellString)),
 });
 
 const ingredientsBlockSchema = z.object({

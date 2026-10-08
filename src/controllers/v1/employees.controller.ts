@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import {
   statusEnum,
   createSchema,
-  patchSchema,
+  updateSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
 import { and, eq } from 'drizzle-orm';
@@ -13,6 +13,7 @@ import { employees, locations, session } from '../../db/index.ts';
 import {
   sendInviteMagicLink,
   createEmployeeTransaction,
+  updateEmployeeTransaction,
 } from '../../services/employee/employee.service.ts';
 
 import catchAsync from '../../shared/utils/catchAsync.ts';
@@ -270,7 +271,7 @@ export const getEmployee = catchAsync(
   },
 );
 
-// ---------- PATCH /api/admin/employees/:id ---------------------------------
+// ---------- PUT /api/admin/employees/:id ---------------------------------
 export const updateEmployee = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const admin = req.employee;
@@ -287,43 +288,20 @@ export const updateEmployee = catchAsync(
       });
     }
 
-    const parsed = patchSchema.safeParse(req.body);
+    const parsed = updateSchema.safeParse(req.body);
     if (!parsed.success) {
       throw parsed.error;
     }
 
-    const updates = parsed.data;
-
-    if (Object.keys(updates).length === 0) {
-      res.status(400).json({
-        error: { code: 'NO_UPDATES', message: 'No fields provided to update.' },
-      });
-      return;
-    }
-
-    const [existing] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, param.data.id))
-      .limit(1);
-
-    if (!existing) {
-      throw new ApiError('Employee not found', 404, true, '', {
-        code: 'EMPLOYEE_NOT_FOUND',
-      });
-    }
-
-    const [updated] = await db
-      .update(employees)
-      .set({
-        ...updates,
-      })
-      .where(eq(employees.id, existing.id))
-      .returning();
+    const { employee: updated } = await updateEmployeeTransaction(
+      param.data.id,
+      parsed.data,
+      admin.id,
+    );
 
     res.status(200).json(
       ApiResponse.success('Employee updated successfully', {
-        employee: publicEmployee(updated!),
+        employee: publicEmployee(updated),
       }),
     );
   },
