@@ -36,5 +36,4 @@ const copyAssets = (dir) => {
 
 copyAssets(srcDir);
 
-// eslint-disable-next-line no-undef
 console.log(`Copied ${copied} asset file(s) from src/ to dist/`);

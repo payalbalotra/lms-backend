@@ -4,15 +4,12 @@ import cors from 'cors';
 import { toNodeHandler } from 'better-auth/node';
 import { sql } from './db/client.ts';
 import { logger } from './config/logger.ts';
-import router from './routes/v1/index.ts';
-import { auth } from './config/auth.ts';
-import { requestId } from './shared/middleware/requestId.middleware.ts';
-import { notFoundHandler } from './shared/middleware/notFound.middleware.ts';
-import {
-  errorConverter,
-  errorHandler,
-} from './shared/middleware/errorHandler.middleware.ts';
-import config from './config/index.ts';
+import router from './routes.ts';
+import { auth } from './lib/auth.ts';
+import { requestId } from './middleware/request-id.ts';
+import { notFoundHandler } from './middleware/not-found.ts';
+import { errorConverter, errorHandler } from './middleware/error-handler.ts';
+import config from './config/env.ts';
 
 const app: Express = express();
 
@@ -63,17 +60,22 @@ app.set('trust proxy', 1);
 // because it consumes the raw request stream.
 app.all('/api/auth/{*splat}', toNodeHandler(auth));
 
-app.use(express.json());
+// Procedures carry two rich bilingual block bodies; real ones go well past
+// the 100kb default, so allow up to 2mb.
+app.use(express.json({ limit: '2mb' }));
 
 // -------------------------
 //  Routes
 // -------------------------
-app.get('/health', (_req: Request, res: Response) => {
+const healthCheck = (_req: Request, res: Response) => {
   res.json({
     ok: true,
     success: { message: 'Backend is running successfully!' },
   });
-});
+};
+
+app.get('/', healthCheck);
+app.get('/health', healthCheck);
 
 app.get('/health/db', async (_req: Request, res: Response) => {
   try {

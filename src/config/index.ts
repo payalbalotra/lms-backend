@@ -62,8 +62,25 @@ const config = {
   databaseUrl: envVars.DATABASE_URL,
   betterAuthSecret: envVars.BETTER_AUTH_SECRET,
   betterAuthUrl: envVars.BETTER_AUTH_URL,
-  cors: [envVars.FRONTEND_BASE_URL],
-  frontendBaseUrl: envVars.FRONTEND_BASE_URL,
+  cors: Array.from(
+    new Set([
+      envVars.FRONTEND_BASE_URL,
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://alimentaria-lms.vercel.app',
+      'https://7x7g7h6m-3000.inc1.devtunnels.ms',
+    ]),
+  ),
+  frontendBaseUrl: (envVars.NODE_ENV === 'production'
+    ? envVars.FRONTEND_BASE_URL &&
+      !envVars.FRONTEND_BASE_URL.includes('localhost')
+      ? envVars.FRONTEND_BASE_URL
+      : 'https://alimentaria-lms.vercel.app'
+    : envVars.FRONTEND_BASE_URL &&
+        !envVars.FRONTEND_BASE_URL.includes('vercel.app')
+      ? envVars.FRONTEND_BASE_URL
+      : 'http://localhost:3000'
+  ).replace(/\/+$/, ''),
   resendApiKey: envVars.RESEND_API_KEY,
   r2AccountId: envVars.R2_ACCOUNT_ID,
   r2Endpoint: envVars.R2_ENDPOINT,

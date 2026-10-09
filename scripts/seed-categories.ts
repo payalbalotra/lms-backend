@@ -1,21 +1,32 @@
 import 'dotenv/config';
-import { db, closeDb } from '../src/db/client.js';
-import { categories, subcategories, user } from '../src/db/index.js';
-import { eq } from 'drizzle-orm';
+import { asc } from 'drizzle-orm';
+import { db, closeDb } from '../src/db/client.ts';
+import { categories, subcategories, user } from '../src/db/schema/index.ts';
+
+// categories.created_by references user.id, so the creator must be a real
+// Better Auth user. seed.ts passes the super admin's id; when this script runs
+// on its own we fall back to the oldest user in the database.
+async function resolveCreatorId(): Promise<string> {
+  const fromEnv = process.env.SEED_CREATOR_USER_ID;
+  if (fromEnv) return fromEnv;
+
+  const [first] = await db
+    .select({ id: user.id })
+    .from(user)
+    .orderBy(asc(user.createdAt))
+    .limit(1);
+  if (!first) {
+    throw new Error(
+      'No user found to own the seeded categories. Run `pnpm db:seed` (creates the super admin) or set SEED_CREATOR_USER_ID.',
+    );
+  }
+  return first.id;
+}
 
 async function seedCategories() {
   console.log('Seeding categories and subcategories...');
 
-  const [adminUser] = await db
-    .select()
-    .from(user)
-    .where(eq(user.email, 'admin@yopmail.com'))
-    .limit(1);
-  if (!adminUser) {
-    throw new Error('Admin user not found.');
-  }
-
-  const creatorId = adminUser.id;
+  const creatorId = await resolveCreatorId();
   console.log(`Using User ID for creator: ${creatorId}`);
 
   console.log('Clearing old categories and subcategories...');
@@ -114,6 +125,7 @@ async function seedCategories() {
     const [insertedCategory] = await db
       .insert(categories)
       .values({
+        id: crypto.randomUUID(),
         nameEn: data.nameEn,
         nameEs: data.nameEs,
         categoryType: data.categoryType,
@@ -127,6 +139,7 @@ async function seedCategories() {
     // 2. Insert Subcategories
     if (data.subcats.length > 0) {
       const subcatsToInsert = data.subcats.map((subcat) => ({
+        id: crypto.randomUUID(),
         categoryId: insertedCategory.id,
         nameEn: subcat.en,
         nameEs: subcat.es,

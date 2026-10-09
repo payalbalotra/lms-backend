@@ -1,4 +1,4 @@
-import config from './config/index.ts';
+import config from './config/env.ts';
 import app from './app.ts';
 import { logger } from './config/logger.ts';
 import { closeDb, sql } from './db/client.ts';

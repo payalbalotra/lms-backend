@@ -33,6 +33,7 @@ import {
 export const magicLinkUrls = new Map<string, string>();
 
 export const auth = betterAuth({
+  baseURL: config.betterAuthUrl,
   // 1. Drizzle adapter — points at the existing Postgres pool in db/client.ts.
   //    Tables are referenced via the schema barrel so we don't depend on
   //    auth-schema.ts being imported directly elsewhere.
@@ -63,7 +64,8 @@ export const auth = betterAuth({
 
         const parsed = new URL(url);
         const token = parsed.searchParams.get('token');
-        const invitationUrl = `${config.frontendBaseUrl}/${emp.languagePref}/invite/token?token=${token}`;
+        const baseUrl = config.frontendBaseUrl.replace(/\/+$/, '');
+        const invitationUrl = `${baseUrl}/${emp.languagePref}/invite/token?token=${token}`;
 
         console.log(`[DEBUG - MAGIC LINK]: ${invitationUrl}`);
         magicLinkUrls.set(email, url); // we can still set the ugly url in cache for Postman tests
@@ -143,7 +145,15 @@ export const auth = betterAuth({
   },
 
   // 5. CORS — only the frontend origin can call the auth endpoints.
-  trustedOrigins: [config.frontendBaseUrl],
+  trustedOrigins: Array.from(
+    new Set([
+      config.frontendBaseUrl,
+      'https://7x7g7h6m-3000.inc1.devtunnels.ms',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://alimentaria-lms.vercel.app',
+    ]),
+  ),
 
   // 6. Signing secret. MUST be set in .env for any non-dev environment.
   secret:

@@ -1,13 +1,11 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import * as schema from './index.ts';
+import config from '../config/env.ts';
+import * as schema from './schema/index.ts';
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  throw new Error('DATABASE_URL is not set in development.env');
-}
-
-const isProd = process.env.NODE_ENV === 'production';
+// config/env.ts validates DATABASE_URL at startup.
+const url = config.databaseUrl;
+const isProd = config.env === 'production';
 
 // ---------------------------------------------------------------------------
 // Postgres connection pool
@@ -21,9 +19,9 @@ const isProd = process.env.NODE_ENV === 'production';
 export const sql = postgres(url, {
   max: isProd ? 20 : 10, // total connections per process
   idle_timeout: 30, // close connections idle longer than this (s)
-  connect_timeout: 10, // fail connect() if it takes longer (s)
+  connect_timeout: 30, // fail connect() if it takes longer (s) - Neon can take 20s to wake up
   max_lifetime: 60 * 30, // recycle connections every 30 min (s) — avoids stale TCP
-  // ssl: isProd ? 'require' : false, // uncomment when using managed Postgres
+  ssl: 'require', // Neon requires SSL
   prepare: false, // disable server-side prepared statements (PgBouncer compat)
 });
 

@@ -7,6 +7,7 @@ import {
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
+  getAssignedProcedures,
 } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -21,6 +22,9 @@ proceduresRoute.get(
   requireRoles(['super_admin']),
   filterProcedures,
 );
+
+// Public read route (any logged-in employee)
+proceduresRoute.get('/assigned', requireAuth, getAssignedProcedures);
 
 // Public read route (any logged-in employee)
 proceduresRoute.get('/:slug', requireAuth, getProcedure);

@@ -8,7 +8,10 @@ import {
   procedureStatuses,
   type ProcedureStatus,
 } from '../../db/procedure.schema.ts';
-import { createProcedureInputSchema } from '../../db/procedure.schema.ts';
+import {
+  createProcedureInputSchema,
+  updateProcedureInputSchema,
+} from '../../db/procedure.schema.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
 
 // ============================================================================
@@ -57,7 +60,7 @@ export const updateProcedure = catchAsync(
       });
     }
 
-    const parsed = createProcedureInputSchema.safeParse(req.body);
+    const parsed = updateProcedureInputSchema.safeParse(req.body);
     if (!parsed.success) {
       throw parsed.error;
     }
@@ -89,6 +92,44 @@ export const getAllProcedures = catchAsync(
     );
     res.status(200).json(
       ApiResponse.success('Procedures retrieved successfully', {
+        procedures: paginatedResult.items,
+        meta: paginatedResult.meta,
+      }),
+    );
+  },
+);
+
+// GET /api/v1/procedures/assigned
+export const getAssignedProcedures = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const { page, limit, search } = getPaginationParams(req.query);
+    const stationIds = req.employee.stationIds || [];
+
+    // If employee has no stations, they shouldn't see any station-specific procedures.
+    // We pass a fake UUID so the IN clause finds nothing.
+    const effectiveStationIds =
+      stationIds.length > 0
+        ? stationIds
+        : ['00000000-0000-0000-0000-000000000000'];
+
+    const paginatedResult = await proceduresService.listProcedures(
+      {
+        status: 'published',
+        stationIds: effectiveStationIds,
+        search,
+      },
+      page,
+      limit,
+    );
+
+    res.status(200).json(
+      ApiResponse.success('Assigned procedures retrieved successfully', {
         procedures: paginatedResult.items,
         meta: paginatedResult.meta,
       }),

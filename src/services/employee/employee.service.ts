@@ -29,11 +29,19 @@ export async function sendInviteMagicLink(input: {
   email: string;
   languagePref: LanguagePref;
 }): Promise<string> {
+  const isProd =
+    config.env === 'production' || process.env.NODE_ENV === 'production';
+  let frontendUrl = isProd
+    ? 'https://alimentaria-lms.vercel.app'
+    : config.frontendBaseUrl && !config.frontendBaseUrl.includes('vercel.app')
+      ? config.frontendBaseUrl
+      : 'http://localhost:3000';
+  frontendUrl = frontendUrl.replace(/\/+$/, '');
   await auth.api.signInMagicLink({
     body: {
       email: input.email,
-      newUserCallbackURL: `${config.frontendBaseUrl}/${input.languagePref}/set-password`,
-      callbackURL: `${config.frontendBaseUrl}/${input.languagePref}/dashboard`,
+      newUserCallbackURL: `${frontendUrl}/${input.languagePref}/set-password`,
+      callbackURL: `${frontendUrl}/${input.languagePref}/dashboard`,
     },
     headers: new Headers({ 'Content-Type': 'application/json' }),
   });
@@ -46,7 +54,7 @@ export async function sendInviteMagicLink(input: {
   const parsed = new URL(uglyUrl);
   const token = parsed.searchParams.get('token');
 
-  return `${config.frontendBaseUrl}/${input.languagePref}/invite/token?token=${token}`;
+  return `${frontendUrl}/${input.languagePref}/invite/token?token=${token}`;
 }
 
 // ============================================================================
