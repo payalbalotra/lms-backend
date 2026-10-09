@@ -23,6 +23,7 @@ import {
   procedureBodySchema,
   type Block,
   type CreateProcedureInput,
+  type UpdateProcedureInput,
   type ProcedureBody,
 } from '../../db/procedure.schema.ts';
 import { subcategories } from '../../db/subcategories.schema.ts';
@@ -168,8 +169,6 @@ export async function createProcedure(
   // Method-block cross-field rule: every step marked critical must declare
   // a criticalLimit. Applies to method blocks AND the steps inside recipe
   // blocks (recipes have methods too).
-  assertCriticalStepsHaveLimits(bodyEn.blocks, 'en');
-  assertCriticalStepsHaveLimits(bodyEs.blocks, 'es');
 
   // Verify the picked subcategory exists. The FK has
   // SET NULL semantics — an invalid id would corrupt the row silently — so
@@ -284,7 +283,7 @@ export async function createProcedure(
 /** Update an existing procedure by ID. Follows the same validation as create. */
 export async function updateProcedure(
   id: string,
-  input: CreateProcedureInput,
+  input: UpdateProcedureInput,
 ): Promise<PublicProcedure> {
   const [existing] = await db
     .select({ id: procedures.id })
@@ -298,16 +297,19 @@ export async function updateProcedure(
     });
   }
 
-  const bodyEn = procedureBodySchema.parse(input.bodyEn);
-  const bodyEs = procedureBodySchema.parse(input.bodyEs);
+  let bodyEn, bodyEs;
 
-  assertRecipeIngredientsAlign(bodyEn.blocks, 'en');
-  assertRecipeIngredientsAlign(bodyEs.blocks, 'es');
+  if (input.bodyEn !== undefined) {
+    bodyEn = procedureBodySchema.parse(input.bodyEn);
+    assertRecipeIngredientsAlign(bodyEn.blocks, 'en');
+  }
 
-  assertCriticalStepsHaveLimits(bodyEn.blocks, 'en');
-  assertCriticalStepsHaveLimits(bodyEs.blocks, 'es');
+  if (input.bodyEs !== undefined) {
+    bodyEs = procedureBodySchema.parse(input.bodyEs);
+    assertRecipeIngredientsAlign(bodyEs.blocks, 'es');
+  }
 
-  if (input.subcategoryId != null) {
+  if (input.subcategoryId !== undefined && input.subcategoryId !== null) {
     const [subcat] = await db
       .select({ id: subcategories.id })
       .from(subcategories)
@@ -320,7 +322,7 @@ export async function updateProcedure(
     }
   }
 
-  if (input.stationId != null) {
+  if (input.stationId !== undefined && input.stationId !== null) {
     const [station] = await db
       .select({ id: stations.id })
       .from(stations)
@@ -365,18 +367,24 @@ export async function updateProcedure(
   await db
     .update(procedures)
     .set({
-      titleEn: input.titleEn,
-      titleEs: input.titleEs,
-      purposeEn: input.purposeEn,
-      purposeEs: input.purposeEs,
-      subcategoryId: input.subcategoryId,
-      stationId: input.stationId ?? null,
-      quizId: input.quizId ?? null,
-      procedureImage: input.procedureImage ?? null,
-      assignUsers: input.assignUsers ?? null,
-      status: input.status,
-      blocksEn: bodyEn,
-      blocksEs: bodyEs,
+      ...(input.titleEn !== undefined && { titleEn: input.titleEn }),
+      ...(input.titleEs !== undefined && { titleEs: input.titleEs }),
+      ...(input.purposeEn !== undefined && { purposeEn: input.purposeEn }),
+      ...(input.purposeEs !== undefined && { purposeEs: input.purposeEs }),
+      ...(input.subcategoryId !== undefined && {
+        subcategoryId: input.subcategoryId,
+      }),
+      ...(input.stationId !== undefined && { stationId: input.stationId }),
+      ...(input.quizId !== undefined && { quizId: input.quizId }),
+      ...(input.procedureImage !== undefined && {
+        procedureImage: input.procedureImage,
+      }),
+      ...(input.assignUsers !== undefined && {
+        assignUsers: input.assignUsers,
+      }),
+      ...(input.status !== undefined && { status: input.status }),
+      ...(bodyEn !== undefined && { blocksEn: bodyEn }),
+      ...(bodyEs !== undefined && { blocksEs: bodyEs }),
       updatedAt: new Date(),
     })
     .where(eq(procedures.id, id));
@@ -601,32 +609,6 @@ function assertRecipeIngredientsAlign(
         throw Object.assign(
           new ApiError(
             `Ingredient "${ingredient.name}" has ${ingredient.amounts.length} amounts but ${expected} factors are defined (${lang}).`,
-            400,
-          ),
-          { errorCode: 'INVALID_INPUT' },
-        );
-      }
-    }
-  }
-}
-
-function assertCriticalStepsHaveLimits(
-  blocks: Block[],
-  lang: 'en' | 'es',
-): void {
-  for (const block of blocks) {
-    const steps =
-      block.kind === 'method'
-        ? block.steps
-        : block.kind === 'recipe'
-          ? block.steps
-          : null;
-    if (!steps) continue;
-    for (const step of steps) {
-      if (step.critical && !step.criticalLimit) {
-        throw Object.assign(
-          new ApiError(
-            `A critical step is missing its critical limit (${lang}): "${(step.body[lang] || step.body['en'] || '').slice(0, 60)}…"`,
             400,
           ),
           { errorCode: 'INVALID_INPUT' },

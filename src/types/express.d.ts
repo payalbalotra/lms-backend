@@ -1,6 +1,6 @@
 import 'express';
 import type { Logger } from 'pino';
-import type { Role } from '../db/employee.schema.ts';
+import type { Role } from '../db/schema/employees.schema.ts';
 
 /**
  * Shape of the employee row that middleware attaches to `req.employee`
@@ -32,6 +32,7 @@ declare global {
         userId?: string | undefined;
         locationId: string;
         role: Role | 'super_admin';
+        stationIds?: string[] | null;
       };
     }
   }

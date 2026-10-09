@@ -320,3 +320,6 @@ export const createProcedureInputSchema = z.object({
   bodyEs: procedureBodySchema,
 });
 export type CreateProcedureInput = z.infer<typeof createProcedureInputSchema>;
+
+export const updateProcedureInputSchema = createProcedureInputSchema.partial();
+export type UpdateProcedureInput = z.infer<typeof updateProcedureInputSchema>;

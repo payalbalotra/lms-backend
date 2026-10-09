@@ -1,13 +1,13 @@
 import pino, { type LoggerOptions } from 'pino';
+import config from './env.ts';
 
-// Per-request lines are formatted inline in server.ts (console.log);
-// pino here covers everything else. See memory: log-preferences.md for the
-// hard rules (one record per line, no headers / cookies / JWTs, err stripped
-// to { msg, code }).
+// Per-request lines are formatted inline in app.ts (console.log); pino here
+// covers everything else. Rules: one record per line, never log headers,
+// cookies or tokens, and errors are stripped to { msg, code }.
 // pino-pretty runs in both dev and prod so the wire-format is identical —
 // no surprises when promoting a dev repro to a real environment.
 const options: LoggerOptions = {
-  level: process.env.LOG_LEVEL ?? 'info',
+  level: config.logLevel,
   serializers: {
     err: (err: unknown) => {
       if (err instanceof Error) {

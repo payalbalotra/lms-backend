@@ -1,0 +1,1 @@
+CREATE INDEX "procedures_updated_at_idx" ON "procedures" USING btree ("updated_at");

@@ -21,12 +21,12 @@
 
 import * as dotenv from 'dotenv';
 dotenv.config({ path: 'development.env' });
-import { sql, closeDb } from '../src/db/client.js';
-import { employees } from '../src/db/index.js';
+import { sql, closeDb } from '../src/db/client.ts';
+import { employees } from '../src/db/schema/index.ts';
 import { eq } from 'drizzle-orm';
-import { db } from '../src/db/client.js';
-import { user } from '../src/db/index.js';
-import { auth } from '../src/config/auth.js';
+import { db } from '../src/db/client.ts';
+import { user, SUPER_ADMIN_USER_ROLE } from '../src/db/schema/index.ts';
+import { auth } from '../src/lib/auth.ts';
 
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -100,40 +100,41 @@ async function ensureMasterEmployee(): Promise<string> {
   return MASTER_EMPLOYEE_ID;
 }
 
-async function ensureSuperAdminUser(): Promise<void> {
+// Returns the super admin's user id so seed-categories can use it as the
+// creator (categories.created_by references user.id).
+async function ensureSuperAdminUser(): Promise<string> {
   const email = 'admin@yopmail.com';
   const password = 'Admin@321';
 
   const [existingUser] = await db
-    .select()
+    .select({ id: user.id })
     .from(user)
     .where(eq(user.email, email))
     .limit(1);
   if (existingUser) {
+    // Older seeds did not set the role; make sure it is there.
+    await db
+      .update(user)
+      .set({ role: SUPER_ADMIN_USER_ROLE })
+      .where(eq(user.id, existingUser.id));
     console.log(`Super admin user already exists: ${email}`);
-    return;
+    return existingUser.id;
   }
 
   console.log(`\n===========================================`);
   console.log(`Creating super admin user: ${email}...`);
-  try {
-    await auth.api.signUpEmail({
-      body: { email, password, name: 'Admin' },
-    });
-    // Mark as verified so they can login immediately
-    await db
-      .update(user)
-      .set({ emailVerified: true })
-      .where(eq(user.email, email));
-    console.log(
-      `✅ Super admin user created! You can login with:\nEmail: ${email}\nPassword: ${password}`,
-    );
-  } catch (err: unknown) {
-    console.error(
-      '❌ Failed to create super admin user:',
-      err instanceof Error ? err.message : err,
-    );
-  }
+  const created = await auth.api.signUpEmail({
+    body: { email, password, name: 'Admin' },
+  });
+  // Mark as verified so they can login immediately, and grant super admin.
+  await db
+    .update(user)
+    .set({ emailVerified: true, role: SUPER_ADMIN_USER_ROLE })
+    .where(eq(user.id, created.user.id));
+  console.log(
+    `✅ Super admin user created! You can login with:\nEmail: ${email}\nPassword: ${password}`,
+  );
+  return created.user.id;
 }
 
 async function run(): Promise<void> {
@@ -167,8 +168,7 @@ async function run(): Promise<void> {
   console.log('===========================================\n');
   await fetchMainLocationId();
   await ensureMasterEmployee();
-
-  await ensureSuperAdminUser();
+  const superAdminUserId = await ensureSuperAdminUser();
 
   console.log('\n===========================================');
   console.log('Running seed-categories.ts...');
@@ -178,33 +178,12 @@ async function run(): Promise<void> {
     ['tsx', path.join(__dirname, 'seed-categories.ts')],
     {
       stdio: 'inherit',
-      env: process.env,
+      env: { ...process.env, SEED_CREATOR_USER_ID: superAdminUserId },
       shell: true,
     },
   );
   if (catResult.status !== 0) {
     console.error(`\n❌ Failed executing seed-categories.ts`);
-    process.exit(1);
-  }
-
-  console.log('\n===========================================');
-  console.log('Running seed-recipes.ts...');
-  console.log('===========================================\n');
-  const recipeResult = spawnSync(
-    'npx',
-    [
-      'tsx',
-      '--env-file=development.env',
-      path.join(__dirname, 'seed-recipes.ts'),
-    ],
-    {
-      stdio: 'inherit',
-      env: process.env,
-      shell: true,
-    },
-  );
-  if (recipeResult.status !== 0) {
-    console.error(`\n❌ Failed executing seed-recipes.ts`);
     process.exit(1);
   }
 
