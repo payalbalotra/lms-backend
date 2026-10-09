@@ -95,11 +95,25 @@ export const setPassword = catchAsync(
       );
     }
 
-    const updated = await setPasswordService(cookieSession.user, password);
+    const {
+      employee: updated,
+      stations,
+      jobs,
+    } = await setPasswordService(cookieSession.user, password);
+
+    const {
+      // jobIds: _jobIds,
+      // stationIds: _stationIds,
+      ...cleanEmployee
+    } = publicEmployee(updated);
 
     res.status(200).json(
       ApiResponse.success('Password set and account activated', {
-        employee: publicEmployee(updated),
+        employee: {
+          ...cleanEmployee,
+          stations,
+          jobs,
+        },
         redirectTo: `/${updated.languagePref}/employee/home`,
       }),
     );
