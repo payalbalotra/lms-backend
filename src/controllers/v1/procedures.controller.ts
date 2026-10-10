@@ -13,6 +13,11 @@ import {
   updateProcedureInputSchema,
 } from '../../db/procedure.schema.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { z } from 'zod';
+
+const updateStationsSchema = z.object({
+  stationId: z.string().uuid().nullable(),
+});
 
 // ============================================================================
 // Procedures
@@ -211,12 +216,20 @@ export const filterProcedures = catchAsync(
 
     const { page, limit, search } = getPaginationParams(req.query);
 
+    // -- categoryType filter (e.g. 'general' or station-based types) --
+    const rawType = req.query.categoryType;
+    const categoryType =
+      typeof rawType === 'string' && rawType.trim().length > 0
+        ? rawType.trim().slice(0, 100)
+        : undefined;
+
     const paginatedResult = await proceduresService.listProcedures(
       {
         status,
         stationIds,
         subcategoryIds,
         categoryIds,
+        categoryType,
         search,
       },
       page,
@@ -260,6 +273,59 @@ export const getProcedure = catchAsync(
       );
   },
 );
+// POST /api/v1/procedures/:id/publish  (super_admin only)
+export const publishProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const procedure = await proceduresService.publishProcedure(id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure published successfully', { procedure }),
+      );
+  },
+);
+
+// PATCH /api/v1/procedures/:id/station (super_admin only, single stationId)
+export const updateProcedureStations = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const parsed = updateStationsSchema.safeParse(req.body);
+    if (!parsed.success) throw parsed.error;
+    const procedure = await proceduresService.updateProcedureStations(
+      id,
+      parsed.data.stationId,
+    );
+    res.status(200).json(
+      ApiResponse.success('Procedure station updated successfully', {
+        procedure,
+      }),
+    );
+  },
+);
+
 // POST /api/v1/procedures/:id/archive  (super_admin only)
 export const archiveProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {

@@ -449,6 +449,37 @@ export async function updateProcedure(
   return toPublic(row);
 }
 
+/** Update only the station link of a procedure (single stationId string).
+ *  Pass `null` to clear. Throws 404 when the procedure or station is unknown. */
+export async function updateProcedureStation(
+  id: string,
+  stationId: string | null,
+): Promise<PublicProcedure> {
+  if (stationId !== null) {
+    const [station] = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(eq(stations.id, stationId))
+      .limit(1);
+    if (!station) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+  const [row] = await db
+    .update(procedures)
+    .set({ stationId, updatedAt: new Date() })
+    .where(eq(procedures.id, id))
+    .returning();
+  if (!row) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+  return toPublic(row);
+}
+
 /** Admin-only list of procedures. Newest first. Optionally filtered by:
  *  - `status`         – 'draft' | 'published'
  *  - `stationIds`     – one or more station UUIDs (OR semantics)

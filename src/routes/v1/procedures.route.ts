@@ -4,6 +4,8 @@ import {
   getAllProcedures,
   filterProcedures,
   getProcedure,
+  publishProcedure,
+  updateProcedureStations,
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
@@ -55,7 +57,21 @@ proceduresRoute.get(
   getAllProcedures,
 );
 
-// Archive / unarchive (super_admin only)
+proceduresRoute.patch(
+  '/:id/station',
+  requireAuth,
+  requireRoles(['super_admin']),
+  updateProcedureStations,
+);
+
+// Archive / unarchive / publish (super_admin only)
+proceduresRoute.post(
+  '/:id/publish',
+  requireAuth,
+  requireRoles(['super_admin']),
+  publishProcedure,
+);
+
 proceduresRoute.post(
   '/:id/archive',
   requireAuth,
