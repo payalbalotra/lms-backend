@@ -29,6 +29,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
         email: null,
         languagePref: 'en',
         status: 'active',
+        stationIds: req.employee?.stationIds ?? [],
       };
 
       if (!allowedRoles.includes('super_admin')) {
@@ -54,6 +55,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
         email: employees.email,
         languagePref: employees.languagePref,
         status: employees.status,
+        stationIds: employees.stationIds,
       })
       .from(employees)
       .where(eq(employees.id, req.session.employeeId))
@@ -96,7 +98,7 @@ export const requireRoles = (allowedRoles: Role[]) => {
       languagePref: row.languagePref,
       status: row.status,
     };
-    req.employee = safe;
+    req.employee = { ...safe, stationIds: row.stationIds || [] };
     next();
   };
 };

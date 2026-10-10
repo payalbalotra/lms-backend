@@ -33,6 +33,7 @@ import {
 } from './procedures.validation.ts';
 import { subcategories } from '../../db/schema/subcategories.schema.ts';
 import { stations } from '../../db/schema/stations.schema.ts';
+import { categories } from '../../db/schema/categories.schema.ts';
 import { employees } from '../../db/schema/employees.schema.ts';
 import {
   publicSubcategory,
@@ -118,6 +119,95 @@ export function publicProcedure(
   };
 }
 
+// Lightweight card shape for LIST endpoints (/assigned, /, /filter).
+// No block bodies — the reader fetches those via GET /:slug.
+// station/category/subcategory are denormalised {id,name} objects so the
+// client can render pills without extra lookups. The two flags are computed
+// against the requesting employee (super_admin flow passes no employee id,
+// so both flags are false there).
+export interface ProcedureListItem {
+  id: string;
+  slug: string;
+  titleEn: string;
+  titleEs: string;
+  purposeEn: string;
+  purposeEs: string;
+  status: ProcedureStatus;
+  station: { id: string; name: string } | null;
+  subcategory: PublicSubcategory | null;
+  category: { id: string; nameEn: string; nameEs: string } | null;
+  quizId: string | null;
+  procedureImage: string | null;
+  assignUsers: string[] | null;
+  // Employee-only flags, present only when a viewer is passed (the /assigned
+  // inbox). Super_admin lists omit them — an admin never needs to know if a
+  // procedure is "directly assigned to me".
+  isStationProcedure?: boolean | undefined;
+  isDirectlyAssigned?: boolean | undefined;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function toProcedureListItem(
+  row: Readonly<typeof procedures.$inferSelect> & {
+    subcategory: typeof subcategories.$inferSelect | null;
+    station: Pick<typeof stations.$inferSelect, 'id' | 'name'> | null;
+    category: Pick<
+      typeof categories.$inferSelect,
+      'id' | 'nameEn' | 'nameEs'
+    > | null;
+  },
+  viewer?: { id: string; stationIds: string[] },
+  opts?: { hideAssignUsers?: boolean },
+): ProcedureListItem {
+  const subcategory = row.subcategory
+    ? publicSubcategory(row.subcategory)
+    : null;
+  const stationId = row.stationId;
+  // Employee-only flags (super_admin responses omit these keys entirely).
+  const flags =
+    viewer != null
+      ? {
+          isStationProcedure:
+            stationId != null && viewer.stationIds.includes(stationId),
+          isDirectlyAssigned:
+            row.assignUsers != null &&
+            viewer.id.length > 0 &&
+            row.assignUsers.includes(viewer.id),
+        }
+      : {};
+  return {
+    id: row.id,
+    slug: row.slug,
+    titleEn: row.titleEn,
+    titleEs: row.titleEs,
+    purposeEn: row.purposeEn,
+    purposeEs: row.purposeEs,
+    status: row.status,
+    station:
+      row.station != null
+        ? { id: row.station.id, name: row.station.name }
+        : stationId != null
+          ? { id: stationId, name: '' }
+          : null,
+    subcategory,
+    category: row.category
+      ? {
+          id: row.category.id,
+          nameEn: row.category.nameEn,
+          nameEs: row.category.nameEs,
+        }
+      : null,
+    quizId: row.quizId,
+    procedureImage: row.procedureImage,
+    // Employees must not see the full invite list — they learn about direct
+    // assignment via isDirectlyAssigned. Super_admin lists keep the field.
+    assignUsers: opts?.hideAssignUsers === true ? null : row.assignUsers,
+    ...flags,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
 // URL-safe slug from a human title. Lowercase, ASCII, hyphens.
 // Diacritics get stripped (so "Limpieza" -> "limpieza"); everything else
 // non-alphanumeric becomes a hyphen; repeated/edge hyphens collapse.
@@ -374,18 +464,43 @@ export async function listProcedures(
     subcategoryIds?: string[] | undefined;
     categoryIds?: string[] | undefined;
     search?: string | undefined;
+    assignedEmployeeId?: string | undefined;
+    // scope=mine on /assigned: only directly-assigned rows, even when the
+    // employee is not part of the procedure's station.
+    assignedOnly?: boolean | undefined;
+    // Employee lists strip assignUsers[] (see toProcedureListItem).
+    hideAssignUsers?: boolean | undefined;
   } = {},
   page: number = 1,
   limit: number = 10,
-): Promise<PaginatedResult<PublicProcedure>> {
+): Promise<PaginatedResult<ProcedureListItem>> {
   const conditions: SQL[] = [];
 
   if (filter.status) {
     conditions.push(eq(procedures.status, filter.status));
   }
 
-  if (filter.stationIds && filter.stationIds.length > 0) {
-    conditions.push(inArray(procedures.stationId, filter.stationIds));
+  if (filter.assignedEmployeeId && filter.assignedOnly) {
+    conditions.push(
+      sql`${procedures.assignUsers} @> ${sql`ARRAY[${filter.assignedEmployeeId}]::uuid[]`}`,
+    );
+  } else if (filter.stationIds && filter.stationIds.length > 0) {
+    const stationCond = inArray(procedures.stationId, filter.stationIds);
+    // Employee inbox: station match OR directly assigned via assignUsers[].
+    if (filter.assignedEmployeeId) {
+      conditions.push(
+        or(
+          stationCond,
+          sql`${procedures.assignUsers} @> ${sql`ARRAY[${filter.assignedEmployeeId}]::uuid[]`}`,
+        )!,
+      );
+    } else {
+      conditions.push(stationCond);
+    }
+  } else if (filter.assignedEmployeeId) {
+    conditions.push(
+      sql`${procedures.assignUsers} @> ${sql`ARRAY[${filter.assignedEmployeeId}]::uuid[]`}`,
+    );
   }
 
   if (filter.subcategoryIds && filter.subcategoryIds.length > 0) {
@@ -415,9 +530,20 @@ export async function listProcedures(
   const countQuery = db.select({ total: count() }).from(procedures);
   const [rows, [countRes]] = await Promise.all([
     db
-      .select({ proc: procedures, subcategory: subcategories })
+      .select({
+        proc: procedures,
+        subcategory: subcategories,
+        station: { id: stations.id, name: stations.name },
+        category: {
+          id: categories.id,
+          nameEn: categories.nameEn,
+          nameEs: categories.nameEs,
+        },
+      })
       .from(procedures)
       .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+      .leftJoin(stations, eq(stations.id, procedures.stationId))
+      .leftJoin(categories, eq(categories.id, subcategories.categoryId))
       .where(whereClause)
       .orderBy(desc(procedures.updatedAt), desc(procedures.id))
       .limit(limit)
@@ -432,8 +558,24 @@ export async function listProcedures(
       : countQuery.where(whereClause),
   ]);
 
+  const viewer =
+    filter.assignedEmployeeId != null
+      ? {
+          id: filter.assignedEmployeeId,
+          stationIds: filter.stationIds ?? [],
+        }
+      : undefined;
   const mapped = rows.map((row) =>
-    publicProcedure({ ...row.proc, subcategory: row.subcategory }),
+    toProcedureListItem(
+      {
+        ...row.proc,
+        subcategory: row.subcategory,
+        station: row.station,
+        category: row.category,
+      },
+      viewer,
+      filter.hideAssignUsers === true ? { hideAssignUsers: true } : undefined,
+    ),
   );
   return formatPaginatedResult(mapped, countRes?.total ?? 0, page, limit);
 }

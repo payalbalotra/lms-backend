@@ -82,6 +82,66 @@ export const updateProcedure = catchAsync(
   },
 );
 
+// GET /api/v1/procedures/assigned
+export const getAssignedProcedures = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const { page, limit, search } = getPaginationParams(req.query);
+    const stationIds = req.employee.stationIds || [];
+
+    // UI chips: ?scope=all (default, station + direct) | ?scope=mine
+    // (only directly-assigned, even outside the employee's stations).
+    const scope = req.query.scope === 'mine' ? 'mine' : 'all';
+
+    // Category chip: ?categoryId=<uuid> (single). Invalid UUID -> 400.
+    let categoryIds: string[] | undefined;
+    const rawCategory = req.query.categoryId;
+    if (typeof rawCategory === 'string' && rawCategory.length > 0) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(rawCategory)) {
+        throw new ApiError('Invalid category id', 400, true, '', {
+          code: 'INVALID_INPUT',
+        });
+      }
+      categoryIds = [rawCategory];
+    }
+
+    // If employee has no stations, they shouldn't see any station-specific procedures.
+    // We pass a fake UUID so the IN clause finds nothing.
+    const effectiveStationIds =
+      stationIds.length > 0
+        ? stationIds
+        : ['00000000-0000-0000-0000-000000000000'];
+
+    const paginatedResult = await proceduresService.listProcedures(
+      {
+        status: 'published',
+        stationIds: effectiveStationIds,
+        assignedEmployeeId: req.employee.id,
+        assignedOnly: scope === 'mine',
+        categoryIds,
+        hideAssignUsers: req.employee.role === 'employee',
+        search,
+      },
+      page,
+      limit,
+    );
+
+    res.status(200).json(
+      ApiResponse.success('Assigned procedures retrieved successfully', {
+        procedures: paginatedResult.items,
+        meta: paginatedResult.meta,
+      }),
+    );
+  },
+);
+
 // GET /api/v1/procedures
 export const getAllProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -223,11 +283,29 @@ export const getProcedure = catchAsync(
         code: 'NOT_FOUND',
       });
     }
-    res
-      .status(200)
-      .json(
-        ApiResponse.success('Procedure retrieved successfully', { procedure }),
-      );
+    // Shared details endpoint: super_admin sees everything; employees only
+    // see published procedures assigned to one of their stations (or directly).
+    let visibleProcedure = procedure;
+    if (req.employee.role === 'employee') {
+      const stationIds = req.employee.stationIds || [];
+      const stationMatch =
+        procedure.stationId != null && stationIds.includes(procedure.stationId);
+      const directMatch =
+        procedure.assignUsers != null &&
+        procedure.assignUsers.includes(req.employee.id);
+      if (procedure.status !== 'published' || (!stationMatch && !directMatch)) {
+        throw new ApiError('Procedure not found', 404, true, '', {
+          code: 'NOT_FOUND',
+        });
+      }
+      // Employees learn direct assignment via the list flag, not the full list.
+      visibleProcedure = { ...procedure, assignUsers: null };
+    }
+    res.status(200).json(
+      ApiResponse.success('Procedure retrieved successfully', {
+        procedure: visibleProcedure,
+      }),
+    );
   },
 );
 // POST /api/v1/procedures/:id/archive  (super_admin only)

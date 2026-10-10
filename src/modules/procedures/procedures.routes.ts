@@ -7,6 +7,7 @@ import {
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
+  getAssignedProcedures,
 } from './procedures.controller.ts';
 import { requireAuth } from '../../middleware/require-auth.ts';
 import { requireRoles } from '../../middleware/require-roles.ts';
@@ -20,6 +21,14 @@ proceduresRoute.get(
   requireAuth,
   requireRoles(['super_admin']),
   filterProcedures,
+);
+
+// Employee inbox (super_admin allowed for testing). Must stay before /:slug.
+proceduresRoute.get(
+  '/assigned',
+  requireAuth,
+  requireRoles(['employee', 'super_admin']),
+  getAssignedProcedures,
 );
 
 // Public read route (any logged-in employee)

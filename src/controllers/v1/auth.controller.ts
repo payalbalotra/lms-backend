@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, user, account } from '../../db/index.ts';
+import { employees, user, account, stations, jobs } from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
 import {
   loginUser,
@@ -220,9 +220,36 @@ export const setPassword = catchAsync(
         .from(employees)
         .where(eq(employees.id, emp.id))
         .limit(1);
+
+      let stationDetails: { id: string; name: string }[] = [];
+      if (updated && updated.stationIds && updated.stationIds.length > 0) {
+        stationDetails = await db
+          .select({ id: stations.id, name: stations.name })
+          .from(stations)
+          .where(inArray(stations.id, updated.stationIds));
+      }
+
+      let jobDetails: { id: string; name: string }[] = [];
+      if (updated && updated.jobIds && updated.jobIds.length > 0) {
+        jobDetails = await db
+          .select({ id: jobs.id, name: jobs.name })
+          .from(jobs)
+          .where(inArray(jobs.id, updated.jobIds));
+      }
+
+      const { jobIds, stationIds, ...cleanEmployee } = publicEmployee(updated!);
+      // Stripped from the response in favour of the denormalised
+      // `stations` / `jobs` objects above.
+      void jobIds;
+      void stationIds;
+
       return void res.status(200).json(
         ApiResponse.success('Password set and account activated', {
-          employee: publicEmployee(updated!),
+          employee: {
+            ...cleanEmployee,
+            stations: stationDetails,
+            jobs: jobDetails,
+          },
           redirectTo: `/${updated!.languagePref}/employee/home`,
         }),
       );
@@ -253,9 +280,36 @@ export const setPassword = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
+
+    let stationDetails: { id: string; name: string }[] = [];
+    if (updated && updated.stationIds && updated.stationIds.length > 0) {
+      stationDetails = await db
+        .select({ id: stations.id, name: stations.name })
+        .from(stations)
+        .where(inArray(stations.id, updated.stationIds));
+    }
+
+    let jobDetails: { id: string; name: string }[] = [];
+    if (updated && updated.jobIds && updated.jobIds.length > 0) {
+      jobDetails = await db
+        .select({ id: jobs.id, name: jobs.name })
+        .from(jobs)
+        .where(inArray(jobs.id, updated.jobIds));
+    }
+
+    const { jobIds, stationIds, ...cleanEmployee } = publicEmployee(updated!);
+    // Stripped from the response in favour of the denormalised
+    // `stations` / `jobs` objects above.
+    void jobIds;
+    void stationIds;
+
     res.status(200).json(
       ApiResponse.success('Password set and account activated', {
-        employee: publicEmployee(updated!),
+        employee: {
+          ...cleanEmployee,
+          stations: stationDetails,
+          jobs: jobDetails,
+        },
         redirectTo: `/${updated!.languagePref}/employee/home`,
       }),
     );

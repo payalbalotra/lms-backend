@@ -5,8 +5,8 @@ import { auth } from '../../config/auth.ts';
 import type { Request } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { db } from '../../db/client.ts';
-import { user } from '../../db/index.ts';
-import { eq } from 'drizzle-orm';
+import { user, stations, jobs } from '../../db/index.ts';
+import { eq, inArray } from 'drizzle-orm';
 
 type Employee = typeof employees.$inferSelect;
 
@@ -144,8 +144,34 @@ export async function getSessionService(req: Request) {
   const deviceMode: 'personal' | 'shared' =
     req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
 
+  let stationDetails: { id: string; name: string }[] = [];
+  if (employee.stationIds && employee.stationIds.length > 0) {
+    stationDetails = await db
+      .select({ id: stations.id, name: stations.name })
+      .from(stations)
+      .where(inArray(stations.id, employee.stationIds));
+  }
+
+  let jobDetails: { id: string; name: string }[] = [];
+  if (employee.jobIds && employee.jobIds.length > 0) {
+    jobDetails = await db
+      .select({ id: jobs.id, name: jobs.name })
+      .from(jobs)
+      .where(inArray(jobs.id, employee.jobIds));
+  }
+
+  const {
+    jobIds: _jobIds,
+    stationIds: _stationIds,
+    ...cleanEmployee
+  } = publicEmployeeShape(employee);
+
   return {
-    employee: publicEmployeeShape(employee),
+    employee: {
+      ...cleanEmployee,
+      stations: stationDetails,
+      jobs: jobDetails,
+    },
     deviceMode,
   };
 }

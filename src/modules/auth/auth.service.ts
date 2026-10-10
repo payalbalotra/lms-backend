@@ -1,13 +1,18 @@
 import ApiError from '../../shared/api-error.ts';
 
-import { employees, type Employee } from '../../db/schema/index.ts';
+import {
+  employees,
+  type Employee,
+  stations,
+  jobs,
+} from '../../db/schema/index.ts';
 import { auth } from '../../lib/auth.ts';
 import type { Request } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { hashPassword } from 'better-auth/crypto';
 import { db } from '../../db/client.ts';
 import { user, account, SUPER_ADMIN_USER_ROLE } from '../../db/schema/index.ts';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { sessionEmployee } from '../employees/employees.mapper.ts';
 
 // ============================================================================
@@ -156,8 +161,34 @@ export async function getSessionService(req: Request) {
   const deviceMode: 'personal' | 'shared' =
     req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
 
+  let stationDetails: { id: string; name: string }[] = [];
+  if (employee.stationIds && employee.stationIds.length > 0) {
+    stationDetails = await db
+      .select({ id: stations.id, name: stations.name })
+      .from(stations)
+      .where(inArray(stations.id, employee.stationIds));
+  }
+
+  let jobDetails: { id: string; name: string }[] = [];
+  if (employee.jobIds && employee.jobIds.length > 0) {
+    jobDetails = await db
+      .select({ id: jobs.id, name: jobs.name })
+      .from(jobs)
+      .where(inArray(jobs.id, employee.jobIds));
+  }
+
+  const {
+    jobIds: _jobIds,
+    stationIds: _stationIds,
+    ...cleanEmployee
+  } = sessionEmployee(employee);
+
   return {
-    employee: sessionEmployee(employee),
+    employee: {
+      ...cleanEmployee,
+      stations: stationDetails,
+      jobs: jobDetails,
+    },
     deviceMode,
   };
 }
@@ -173,7 +204,11 @@ export async function getSessionService(req: Request) {
 export async function setPasswordService(
   sessionUser: { id: string; email: string },
   password: string,
-): Promise<Employee> {
+): Promise<{
+  employee: Employee;
+  stations: { id: string; name: string }[];
+  jobs: { id: string; name: string }[];
+}> {
   const userId = sessionUser.id;
 
   // Prefer the employee already linked to this user; otherwise match by the
@@ -257,7 +292,23 @@ export async function setPasswordService(
       .where(eq(employees.id, employee.id))
       .returning();
 
-    return updated!;
+    let stationDetails: { id: string; name: string }[] = [];
+    if (updated && updated.stationIds && updated.stationIds.length > 0) {
+      stationDetails = await tx
+        .select({ id: stations.id, name: stations.name })
+        .from(stations)
+        .where(inArray(stations.id, updated.stationIds));
+    }
+
+    let jobDetails: { id: string; name: string }[] = [];
+    if (updated && updated.jobIds && updated.jobIds.length > 0) {
+      jobDetails = await tx
+        .select({ id: jobs.id, name: jobs.name })
+        .from(jobs)
+        .where(inArray(jobs.id, updated.jobIds));
+    }
+
+    return { employee: updated!, stations: stationDetails, jobs: jobDetails };
   });
 }
 
