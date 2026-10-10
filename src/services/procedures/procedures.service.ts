@@ -27,6 +27,7 @@ import {
   type ProcedureBody,
 } from '../../db/procedure.schema.ts';
 import { subcategories } from '../../db/subcategories.schema.ts';
+import { categories } from '../../db/categories.schema.ts';
 import { stations } from '../../db/stations.schema.ts';
 import { employees } from '../../db/employee.schema.ts';
 import {
@@ -88,6 +89,7 @@ export function parseStoredBody(raw: unknown, where: string): ProcedureBody {
 export function publicProcedure(
   row: Readonly<typeof procedures.$inferSelect> & {
     subcategory: typeof subcategories.$inferSelect | null;
+    stations?: { id: string; name: string }[] | undefined;
   },
 ): PublicProcedure {
   const p = row;
@@ -170,6 +172,21 @@ export async function createProcedure(
   // a criticalLimit. Applies to method blocks AND the steps inside recipe
   // blocks (recipes have methods too).
 
+  // Verify the picked station exists. FK is SET NULL — an invalid id would
+  // silently corrupt the row, so surface a clean 400/404 here.
+  if (input.stationId != null) {
+    const [station] = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(eq(stations.id, input.stationId))
+      .limit(1);
+    if (!station) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+
   // Verify the picked subcategory exists. The FK has
   // SET NULL semantics — an invalid id would corrupt the row silently — so
   // we surface a clean 400 / 404 here.
@@ -182,21 +199,6 @@ export async function createProcedure(
     if (!subcat) {
       throw Object.assign(new ApiError('Subcategory not found', 404), {
         errorCode: 'SUBCATEGORY_NOT_FOUND',
-      });
-    }
-  }
-
-  // Verify the picked station exists. FK is SET NULL — an invalid id would
-  // silently corrupt the row, so surface a clean 400/404 here.
-  if (input.stationId != null) {
-    const [station] = await db
-      .select({ id: stations.id })
-      .from(stations)
-      .where(eq(stations.id, input.stationId))
-      .limit(1);
-    if (!station) {
-      throw Object.assign(new ApiError('Station not found', 404), {
-        errorCode: 'STATION_NOT_FOUND',
       });
     }
   }
@@ -415,6 +417,8 @@ export async function updateProcedure(
  *  - `stationIds`     – one or more station UUIDs (OR semantics)
  *  - `subcategoryIds` – one or more subcategory UUIDs (OR semantics)
  *  - `categoryIds`    – one or more category UUIDs (OR semantics)
+ *  - `categoryType`   – category_type exact match, case-insensitive
+ *    (e.g. 'general' or station-based types). AND-combined with the rest.
  *
  *  Returns the full public shape so the editor can re-open a draft without a
  *  second fetch. */
@@ -424,6 +428,7 @@ export async function listProcedures(
     stationIds?: string[] | undefined;
     subcategoryIds?: string[] | undefined;
     categoryIds?: string[] | undefined;
+    categoryType?: string | undefined;
     search?: string | undefined;
   } = {},
   page: number = 1,
@@ -447,6 +452,12 @@ export async function listProcedures(
     conditions.push(inArray(subcategories.categoryId, filter.categoryIds));
   }
 
+  if (filter.categoryType && filter.categoryType.trim().length > 0) {
+    conditions.push(
+      sql`lower(${categories.categoryType}) = lower(${filter.categoryType.trim()})`,
+    );
+  }
+
   if (filter.search) {
     conditions.push(
       or(
@@ -463,6 +474,7 @@ export async function listProcedures(
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
     .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .leftJoin(categories, eq(categories.id, subcategories.categoryId))
     .where(whereClause)
     .orderBy(desc(procedures.updatedAt))
     .limit(limit)
@@ -472,6 +484,7 @@ export async function listProcedures(
     .select({ total: count() })
     .from(procedures)
     .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .leftJoin(categories, eq(categories.id, subcategories.categoryId))
     .where(whereClause);
 
   const mapped = rows.map((row) =>
@@ -579,6 +592,88 @@ export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
     ...existing.proc,
     status: restoreStatus,
     previousStatus: null,
+    updatedAt: now,
+    subcategory: existing.subcategory,
+  });
+}
+
+/** Update the single station link of a procedure (string, null clears). */
+export async function updateProcedureStations(
+  id: string,
+  stationId: string | null,
+): Promise<PublicProcedure> {
+  if (stationId !== null) {
+    const [station] = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(eq(stations.id, stationId))
+      .limit(1);
+    if (!station) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+  const now = new Date();
+  await db
+    .update(procedures)
+    .set({ stationId, updatedAt: now })
+    .where(eq(procedures.id, id));
+  const [row] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+  if (!row) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+  return publicProcedure({ ...row.proc, subcategory: row.subcategory });
+}
+
+/** Publish a procedure (draft → published).
+ *  Throws 404 when the id doesn't exist, 409 when already published or archived. */
+export async function publishProcedure(id: string): Promise<PublicProcedure> {
+  const [existing] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  if (existing.proc.status === 'published') {
+    throw Object.assign(new ApiError('Procedure is already published', 409), {
+      errorCode: 'ALREADY_PUBLISHED',
+    });
+  }
+
+  if (existing.proc.status === 'archived') {
+    throw Object.assign(
+      new ApiError(
+        'Archived procedure cannot be published. Unarchive it first.',
+        409,
+      ),
+      { errorCode: 'ARCHIVED' },
+    );
+  }
+
+  const now = new Date();
+  await db
+    .update(procedures)
+    .set({ status: 'published', updatedAt: now })
+    .where(eq(procedures.id, id));
+
+  return publicProcedure({
+    ...existing.proc,
+    status: 'published',
     updatedAt: now,
     subcategory: existing.subcategory,
   });

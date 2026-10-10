@@ -10,7 +10,12 @@ import {
 } from '../../db/schema/procedures.schema.ts';
 import { createProcedureInputSchema } from './procedures.validation.ts';
 import catchAsync from '../../shared/catch-async.ts';
+import { z } from 'zod';
 import { uuidIdParam } from '../../shared/common.validation.ts';
+
+const updateStationSchema = z.object({
+  stationId: z.string().uuid().nullable(),
+});
 
 function parseProcedureId(req: Request): string {
   if (!req.params.id) {
@@ -79,6 +84,31 @@ export const updateProcedure = catchAsync(
       .json(
         ApiResponse.success('Procedure updated successfully', { procedure }),
       );
+  },
+);
+
+// PATCH /api/v1/procedures/:id/station (single stationId string, null clears)
+export const updateProcedureStation = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+    const id = parseProcedureId(req);
+    const parsed = updateStationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    const procedure = await proceduresService.updateProcedureStation(
+      id,
+      parsed.data.stationId,
+    );
+    res.status(200).json(
+      ApiResponse.success('Procedure station updated successfully', {
+        procedure,
+      }),
+    );
   },
 );
 

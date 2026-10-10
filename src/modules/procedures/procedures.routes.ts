@@ -7,6 +7,7 @@ import {
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
+  updateProcedureStation,
   getAssignedProcedures,
 } from './procedures.controller.ts';
 import { requireAuth } from '../../middleware/require-auth.ts';
@@ -58,6 +59,13 @@ proceduresRoute.get(
   requireAuth,
   requireRoles(['super_admin']),
   getAllProcedures,
+);
+
+proceduresRoute.patch(
+  '/:id/station',
+  requireAuth,
+  requireRoles(['super_admin']),
+  updateProcedureStation,
 );
 
 // Archive / unarchive (super_admin only)

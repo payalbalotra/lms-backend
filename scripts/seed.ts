@@ -6,13 +6,14 @@
 //   pnpm db:seed
 //
 // What it does:
-//   1. Inserts one location (loc-main) — ON CONFLICT DO NOTHING.
-//   2. Inserts four roles (general, station, confidential, master).
-//   3. Inserts the six default Mexican-restaurant stations for loc-main.
-//   4. Ensures a master-clearance employee exists (idempotent — if one
+//   1. Seeds locations (seed-locations.ts).
+//   2. Seeds jobs (seed-jobs.ts).
+//   3. Seeds stations for loc-main (seed-stations.ts).
+//   4. Ensures a super_admin employee exists (idempotent — if one
 //      already exists, leaves it alone).
-//   5. Generates a fresh invite for the master employee and prints the
-//      activation URL + 5-digit code.
+//   5. Ensures the super admin user (admin@yopmail.com, role=super_admin)
+//      exists with email verified so they can log in immediately.
+//   6. Seeds categories + subcategories (seed-categories.ts).
 //
 // The seed NEVER sets a password. To log in as the master, open the printed
 // URL, enter the code, and choose a password. Better Auth's signUpEmail then
